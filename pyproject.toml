@@ -52,6 +52,9 @@ packages = ["app"]
 [tool.ruff]
 line-length = 110
 target-version = "py311"
+# 迁移脚本由 Alembic autogenerate 产出，不手工调整格式：
+# 改了之后下次重新生成又会变回去，徒增 diff 噪声。
+exclude = ["migrations/versions"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
