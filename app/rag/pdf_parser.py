@@ -77,6 +77,7 @@ class ParsedBlock:
     currency: str | None = None
     caption: str | None = None
     unit_source: str | None = None
+    statement_type: str | None = None
     flags: list[str] = field(default_factory=list)
     n_rows: int = 0
     n_cols: int = 0
@@ -173,6 +174,27 @@ def is_numeric_table(rows: list[list[str]]) -> bool:
     if filled < 4:
         return False
     return numeric / filled >= 0.2
+
+
+def infer_statement_type(*texts: str | None) -> str | None:
+    """从标题与表题推断三大报表类型。
+
+    作为检索时的标量过滤条件：「查利润表里的营业收入」这类问题
+    靠它精确定位，不必指望向量检索区分报表种类。
+    合并报表与母公司报表归为同一类型，由上下文区分。
+    """
+    joined = " ".join(t for t in texts if t)
+    if not joined:
+        return None
+    if "资产负债表" in joined:
+        return "balance"
+    if "现金流量表" in joined:
+        return "cashflow"
+    if "利润表" in joined or "损益" in joined or "综合收益" in joined:
+        return "income"
+    if "所有者权益变动" in joined or "股东权益变动" in joined:
+        return "equity"
+    return None
 
 
 def inline_unit(rows: list[list[str]]) -> tuple[str | None, str | None, int]:
@@ -344,24 +366,80 @@ def parse_pdf(path: str | Path, max_pages: int | None = None) -> ParsedDocument:
         page_text = page.get_text("text") or ""
         page_h = page.rect.height
 
-        for line in page_text.splitlines():
-            tracker.feed(line)
-        heading = tracker.path()
-
         try:
-            tables = list(page.find_tables())
+            raw_tables = list(page.find_tables())
         except Exception as exc:  # 个别页版面异常不应中断整篇解析
             logger.warning("第 %d 页表格检测失败：%s", i + 1, exc)
-            tables = []
+            raw_tables = []
 
-        table_rects = []
-        for t in tables:
+        # 先筛出有效表格并记录其区域，正文需要扣除这些区域
+        valid: list[tuple] = []
+        table_rects: list[pymupdf.Rect] = []
+        for t in raw_tables:
             try:
                 rows = t.extract()
             except Exception:
                 continue
             if not rows or len(rows) < 2:
                 continue
+            valid.append((t, rows))
+            table_rects.append(pymupdf.Rect(t.bbox))
+
+        # 按页面纵向位置把正文段与表格混合排序。
+        # 必须如此：标题追踪器若先吃完整页文本再处理表格，
+        # 表格拿到的会是整页最后一个标题 —— 实测出现过
+        # 「heading=十、非经常性损益」而内容是「九、分季度财务数据」的错配。
+        items: list[tuple[float, str, object]] = []
+        for block in page.get_text("dict").get("blocks", []):
+            if block.get("type") != 0:
+                continue
+            brect = pymupdf.Rect(block["bbox"])
+            if any(brect.intersects(r) for r in table_rects):
+                continue
+            seg = "".join(
+                span.get("text", "")
+                for line in block.get("lines", [])
+                for span in line.get("spans", [])
+            ).strip()
+            if seg:
+                items.append((brect.y0, "text", seg))
+        for t, rows in valid:
+            items.append((t.bbox[1], "table", (t, rows)))
+        items.sort(key=lambda x: x[0])
+
+        pending_text: list[str] = []
+        pending_heading = tracker.path()
+
+        def flush_text(page_no: int = i + 1) -> None:
+            nonlocal pending_text, pending_heading
+            if pending_text:
+                blocks.append(
+                    ParsedBlock(
+                        kind="text",
+                        text="\n".join(pending_text),
+                        page_start=page_no,
+                        page_end=page_no,
+                        heading_path=pending_heading,
+                    )
+                )
+            pending_text = []
+            pending_heading = tracker.path()
+
+        for _y, kind, payload in items:
+            if kind == "text":
+                seg = payload
+                for line in seg.splitlines():
+                    tracker.feed(line)
+                if not pending_text:
+                    pending_heading = tracker.path()
+                if not is_toc_line(seg) and len(seg) > 8:
+                    pending_text.append(seg)
+                continue
+
+            # 遇到表格：先结清此前累积的正文，再以当前标题状态处理表格
+            flush_text()
+            t, rows = payload
+            heading = tracker.path()
 
             ctx, skip_rows = extract_context(page, t.bbox, page_text, doc_unit, rows)
             flags: list[str] = []
@@ -387,6 +465,7 @@ def parse_pdf(path: str | Path, max_pages: int | None = None) -> ParsedDocument:
                 currency=ctx.currency,
                 caption=ctx.caption,
                 unit_source=ctx.unit_source,
+                statement_type=infer_statement_type(heading, ctx.caption),
                 flags=flags,
                 n_rows=len(rows),
                 n_cols=len(rows[0]),
@@ -411,37 +490,10 @@ def parse_pdf(path: str | Path, max_pages: int | None = None) -> ParsedDocument:
 
             if not merged:
                 blocks.append(blk)
-            table_rects.append(pymupdf.Rect(t.bbox))
             prev_tail = (prev_tail if merged else blk) if "bottom_of_page" in flags else None
 
-        # 正文：扣除表格区域后剩余的文本
-        text_parts = []
-        for block in page.get_text("dict").get("blocks", []):
-            if block.get("type") != 0:
-                continue
-            brect = pymupdf.Rect(block["bbox"])
-            if any(brect.intersects(r) for r in table_rects):
-                continue
-            seg = "".join(
-                span.get("text", "")
-                for line in block.get("lines", [])
-                for span in line.get("spans", [])
-            ).strip()
-            if seg and not is_toc_line(seg) and len(seg) > 8:
-                text_parts.append(seg)
-
-        if text_parts:
-            blocks.append(
-                ParsedBlock(
-                    kind="text",
-                    text="\n".join(text_parts),
-                    page_start=i + 1,
-                    page_end=i + 1,
-                    heading_path=heading,
-                    unit=None,
-                    currency=None,
-                )
-            )
+        # 页面末尾残留的正文
+        flush_text()
 
     doc.close()
     logger.info(

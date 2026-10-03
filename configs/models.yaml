@@ -56,7 +56,7 @@ embeddings:
     model: text-embedding-v4
     dim: 1024
     price_in: 0.0005
-    batch_size: 64
+    batch_size: 10          # 百炼 embedding 单次批量上限，超出会报参数错误
 
 rerank:
   default:

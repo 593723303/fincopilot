@@ -25,6 +25,6 @@ milvus:
     rrf_k: 60
 
 ingestion:
-  embed_batch_size: 64
+  embed_batch_size: 10     # 与 models.yaml 的 batch_size 保持一致，受百炼接口上限约束
   embed_max_retries: 3
   worker_concurrency: 2

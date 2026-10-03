@@ -21,6 +21,8 @@ dependencies = [
     "langchain>=1.4,<2.0",
     "langchain-openai>=1.6,<2.0",
     "langchain-core>=1.6,<2.0",
+    # LangChain 1.x 把切分器拆成了独立包，不随 langchain 主包安装
+    "langchain-text-splitters>=1.0,<2.0",
     "langgraph>=1.2,<2.0",
 
     # 存储 —— pymilvus 3.x 对应 Milvus 3.x 服务端

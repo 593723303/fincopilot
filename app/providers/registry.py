@@ -138,12 +138,21 @@ def get_chat(profile: str = "strong", **overrides: Any) -> BaseChatModel:
 
 
 def get_embeddings(profile: str = "default") -> OpenAIEmbeddings:
+    """返回 embedding 客户端。
+
+    check_embedding_ctx_length=False 是接入非 OpenAI 兼容端点的必需设置：
+    LangChain 默认会先把文本 tokenize 成 token id 数组再发送（OpenAI 官方
+    接口接受这种形式），而百炼等厂商只接受字符串，会直接报
+    "contents is neither str nor list of str"。
+    关闭后不再自动按上下文长度切分，长度由调用方保证（见 indexer.truncate_utf8）。
+    """
     spec = get_registry().embed_spec(profile)
     return OpenAIEmbeddings(
         model=spec.model,
         base_url=spec.base_url,
         api_key=spec.api_key,
-        chunk_size=spec.batch_size or 64,
+        chunk_size=spec.batch_size or 10,
+        check_embedding_ctx_length=False,
     )
 
 
