@@ -91,6 +91,29 @@ class RetrievedChunk:
         )
 
 
+# 年报通常披露最近三年数据，因此 2024 年的数字可能出现在
+# 2024、2025 或 2026 年的年报中。
+REPORT_COVERS_YEARS = 3
+
+
+def expand_report_years(years: list[int]) -> list[int]:
+    """把「数据年度」映射为可能承载它的「报告年度」。
+
+    这是个极易踩的坑：report_year 是**文档的报告年度**，
+    而用户问的是**数据的年度**，两者不是一回事。
+    一份 2025 年报含 2023–2025 三年数据，但 report_year 只有 2025，
+    用 `report_year == 2024` 过滤会直接返回空集。
+
+    实测该缺陷导致 61 题中约四分之一被误判为「检索无结果」而拒答，
+    且因为在检索阶段就空了，相关度阈值根本没被触及——
+    调阈值完全无效，排查时极易被误导。
+    """
+    out: set[int] = set()
+    for y in years:
+        out.update(range(y, y + REPORT_COVERS_YEARS))
+    return sorted(out)
+
+
 def build_expr(filters: QueryFilters, strategy: str) -> str:
     """构造 Milvus 标量过滤表达式。
 
@@ -101,7 +124,7 @@ def build_expr(filters: QueryFilters, strategy: str) -> str:
         codes = ", ".join(f'"{c}"' for c in filters.company_codes)
         parts.append(f"company_code in [{codes}]")
     if filters.years:
-        years = ", ".join(str(y) for y in filters.years)
+        years = ", ".join(str(y) for y in expand_report_years(filters.years))
         parts.append(f"report_year in [{years}]")
     if filters.statement_type:
         parts.append(f'statement_type == "{filters.statement_type}"')

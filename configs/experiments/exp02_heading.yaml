@@ -48,7 +48,12 @@ generation:
   profile: strong
   require_citation: true
   require_unit_declaration: true
-  relevance_threshold: 0.02   # RRF 分值量级远小于余弦相似度，阈值需随融合方式调整
+  # RRF 分值的理论范围（k=60）：两路都排第一 = 2/61 = 0.0328，
+  # 只有一路命中 = 1/61 = 0.0164。阈值设成 0.02 会把「仅一路命中」
+  # 的结果全部拒掉——实测 61 题中有 14 题因此误拒，占全部失败的 58%，
+  # 而同期 Recall@K 高达 89.8%，说明文档本来是检索到了的。
+  # 取 0.010，低于单路命中下限，只滤掉真正毫无关联的结果。
+  relevance_threshold: 0.010
   max_retry_on_low_relevance: 1
 
 cache:

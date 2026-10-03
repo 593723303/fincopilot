@@ -30,8 +30,26 @@ def test_expr_always_includes_strategy():
 def test_expr_with_company_and_year():
     expr = build_expr(QueryFilters(company_codes=["600519"], years=[2025]), "fixed")
     assert 'company_code in ["600519"]' in expr
-    assert "report_year in [2025]" in expr
+    assert "report_year in [2025, 2026, 2027]" in expr
     assert 'strategy == "fixed"' in expr
+
+
+def test_report_years_expand_to_coverage():
+    """report_year 是文档的报告年度，不是数据的年度。
+
+    一份 2025 年报含 2023–2025 三年数据，按 report_year == 2024 过滤
+    会直接返回空集——实测该缺陷导致约四分之一题目被误拒。
+    """
+    from app.rag.retrievers import expand_report_years
+
+    assert expand_report_years([2024]) == [2024, 2025, 2026]
+    assert expand_report_years([]) == []
+
+
+def test_expr_for_past_year_includes_newer_reports():
+    """问 2023 年数据时，必须能匹配到 2025 年的年报。"""
+    expr = build_expr(QueryFilters(years=[2023]), "heading")
+    assert "2025" in expr
 
 
 def test_expr_multiple_companies():
