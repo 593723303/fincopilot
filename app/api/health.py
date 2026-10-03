@@ -13,6 +13,7 @@ from app.config.settings import get_settings
 from app.providers.registry import configured_profiles
 from app.store.milvus import ping_milvus
 from app.store.pg import ping_pg
+from app.store.queue import ping_queue
 from app.store.redis_client import ping_redis
 
 router = APIRouter(tags=["health"])
@@ -32,11 +33,13 @@ async def readyz(response: Response) -> dict:
     pg_ok, pg_msg = await ping_pg()
     redis_ok, redis_msg = await ping_redis()
     milvus_ok, milvus_msg = await ping_milvus()
+    queue_ok, queue_msg = await ping_queue()
 
     stores = {
         "postgres": {"ok": pg_ok, "detail": pg_msg},
         "redis": {"ok": redis_ok, "detail": redis_msg},
         "milvus": {"ok": milvus_ok, "detail": milvus_msg},
+        "task_queue": {"ok": queue_ok, "detail": queue_msg},
     }
 
     # Milvus 与 PostgreSQL 是强依赖；Redis 不可用只降级不阻断（架构 §3）

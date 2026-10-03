@@ -13,11 +13,12 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api import chat, health
+from app.api import chat, documents, health
 from app.config.experiment import load_experiment
 from app.config.settings import get_settings
 from app.store.milvus import close_milvus, init_milvus
 from app.store.pg import close_pg, init_pg
+from app.store.queue import close_queue, init_queue
 from app.store.redis_client import close_redis, init_redis
 
 logger = logging.getLogger(__name__)
@@ -40,7 +41,12 @@ async def lifespan(app: FastAPI):
 
     # 连接失败不阻止启动 —— 让 /readyz 把问题暴露出来，
     # 比启动时崩溃更利于定位（尤其本地只起了部分容器时）
-    for name, fn in (("PostgreSQL", init_pg), ("Redis", init_redis), ("Milvus", init_milvus)):
+    for name, fn in (
+        ("PostgreSQL", init_pg),
+        ("Redis", init_redis),
+        ("Milvus", init_milvus),
+        ("任务队列", init_queue),
+    ):
         try:
             await fn()
         except Exception as exc:
@@ -48,6 +54,7 @@ async def lifespan(app: FastAPI):
 
     yield
 
+    await close_queue()
     await close_milvus()
     await close_redis()
     await close_pg()
@@ -70,6 +77,7 @@ def create_app() -> FastAPI:
     )
     app.include_router(health.router)
     app.include_router(chat.router)
+    app.include_router(documents.router)
     return app
 
 

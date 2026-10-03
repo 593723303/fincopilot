@@ -14,7 +14,7 @@
 | 里程碑 | 内容 | 状态 |
 |---|---|---|
 | **M0** | 骨架与地基：配置体系、Provider Registry、三存储连接、健康探针、Langfuse | ✅ 完成 |
-| M1 | 离线入库链路：解析 → 分块 → 表格元数据 → 向量化 → 双写 | ⬜ |
+| **M1** | 离线入库链路：解析 → 分块 → 表格元数据 → 向量化 → 双写 | ✅ 完成 |
 | M2 | 在线 RAG 与首个可演示版本 | ⬜ |
 | M3 | 评估体系与基线（320 条评估集） | ⬜ |
 | M4 | 检索优化消融（顺序 / 交叉 / 逆向三阶段） | ⬜ |
@@ -76,8 +76,34 @@ uvicorn app.main:app --reload
 ```
 
 - http://127.0.0.1:8000/healthz — 进程存活
-- http://127.0.0.1:8000/readyz — 三存储连通性 + Key 配置状态 + 当前实验
+- http://127.0.0.1:8000/readyz — 存储连通性 + Key 配置状态 + 当前实验
 - http://127.0.0.1:8000/docs — 接口文档
+
+### 6. 准备语料并入库
+
+```bash
+python -m scripts.fetch_reports            # 从巨潮下载年报（含内容校验）
+python -m alembic upgrade head             # 建表
+python -m scripts.init_stores              # 建 Milvus collection
+python -m scripts.ingest --pages 20        # 入库，限页数以控制 embedding 成本
+```
+
+也可以走接口异步入库，此时需要另开一个 Worker 进程：
+
+```bash
+python -m arq app.worker.Settings          # Worker（与 API 同一镜像，不同启动命令）
+```
+
+```
+POST   /api/v1/documents                上传 PDF，立即返回 job_id
+GET    /api/v1/documents                文档列表与入库状态
+GET    /api/v1/documents/jobs/{job_id}  任务进度
+POST   /api/v1/documents/{id}/reindex   按指定实验配置重建索引
+DELETE /api/v1/documents/{id}           删除文档及其向量
+```
+
+> 同一文档可在不同实验配置下并存入库：块按 `strategy` 字段隔离，
+> 这是 M4 消融实验能横向对比的前提。
 
 ---
 

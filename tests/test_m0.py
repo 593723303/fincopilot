@@ -140,7 +140,7 @@ async def test_readyz_reports_stores_without_crashing(client):
     resp = await client.get("/readyz")
     assert resp.status_code in (200, 503)
     body = resp.json()
-    assert set(body["stores"]) == {"postgres", "redis", "milvus"}
+    assert set(body["stores"]) == {"postgres", "redis", "milvus", "task_queue"}
     assert "exp_id" in body["experiment"]
 
 

@@ -16,6 +16,8 @@ dependencies = [
     "pydantic-settings>=2.15,<3.0",
     "sse-starlette>=3.5,<4.0",
     "pyyaml>=6.0,<7.0",
+    # FastAPI 的文件上传依赖，不随 fastapi 主包安装
+    "python-multipart>=0.0.20,<1.0",
 
     # LLM 应用 —— 已进入 1.x
     "langchain>=1.4,<2.0",
@@ -68,6 +70,19 @@ exclude = ["migrations/versions"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
+
+[tool.ruff.lint.flake8-bugbear]
+# FastAPI 的依赖注入惯用法就是在默认参数里调用这些函数，
+# B008（禁止默认参数中调用函数）在此处是误报。
+extend-immutable-calls = [
+    "fastapi.Body",
+    "fastapi.Depends",
+    "fastapi.File",
+    "fastapi.Form",
+    "fastapi.Header",
+    "fastapi.Path",
+    "fastapi.Query",
+]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
