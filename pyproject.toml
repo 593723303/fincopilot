@@ -44,6 +44,9 @@ dependencies = [
 
     # 可观测
     "langfuse>=4.16,<5.0",
+
+    # 对话前端。独立进程运行，通过 SSE 调用后端
+    "chainlit>=2.0,<3.0",
 ]
 
 [project.optional-dependencies]

@@ -1,0 +1,76 @@
+# 实验 exp02 —— 按标题层级分块 + 父子块 + 混合检索
+#
+# 相对 exp01_baseline 的变更：
+#   chunking.strategy      fixed → heading
+#   chunking.parent_child  false → true
+#   retrieval.mode         dense → hybrid
+#
+# 注意这里一次动了三个因子，只能说明"整体更好"，
+# 不能归因到某一项。M4 会按架构 §12.3 的三阶段方法拆开做：
+# 顺序消融摸方向 → 2×2 交叉验因子独立性 → 逆向消融算边际贡献。
+
+exp_id: exp02_heading
+description: "按标题层级分块 + 父子块 + 混合检索，M2 的默认配置"
+
+chunking:
+  strategy: heading
+  chunk_size: 512
+  overlap: 64
+  parent_child: true
+  table_atomic: true
+  table_metadata: true
+  cross_page_merge: true
+
+retrieval:
+  mode: hybrid
+  top_k_dense: 20
+  top_k_sparse: 20
+  fusion: rrf
+  filters_pushdown: true
+
+rerank:
+  enabled: false        # M4 引入
+  model: gte-rerank-v2
+  top_n: 5
+
+query_transform:
+  coref_resolution: true
+  hyde: false
+  decompose: false
+
+parent_expansion:
+  enabled: true
+  dedup_by_parent: true
+  token_budget: 6000
+  keep_table_intact: true
+
+generation:
+  profile: strong
+  require_citation: true
+  require_unit_declaration: true
+  relevance_threshold: 0.02   # RRF 分值量级远小于余弦相似度，阈值需随融合方式调整
+  max_retry_on_low_relevance: 1
+
+cache:
+  exact: true
+  semantic: false
+  similarity_threshold: 0.97
+  entity_constraint: strict
+  audit_sample_rate: 0.05
+
+router:
+  profile: light
+  confidence_threshold: 0.7
+  fallback_branch: agent
+
+agent:
+  max_steps: 8
+  max_tool_errors: 3
+  budget_cny: 0.15
+
+eval:
+  dataset: v1
+  bootstrap_rounds: 1000
+  judge_profile: judge
+  numeric_tolerance: 0.005
+  stratified_report: true

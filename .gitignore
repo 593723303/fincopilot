@@ -21,3 +21,7 @@ tmp/
 # IDE
 .idea/
 .vscode/
+
+# Chainlit 运行时自动生成（配置与多语言文件，无需版本控制）
+.chainlit/
+chainlit.md

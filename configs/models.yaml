@@ -31,8 +31,19 @@ profiles:
     timeout: 60
     temperature: 0.1
 
-  # 轻模型：路由、查询改写等高频低难度任务
+  # 轻模型：路由、查询改写等高频低难度任务。
+  # 用百炼而非 DeepSeek —— 这是在线主链路，不能依赖尚未配置的第二家 Key，
+  # 否则路由会静默回退到规则匹配，表现为"能跑但判断全错"（M2 实测踩过）。
   light:
+    provider: bailian
+    model: qwen-turbo
+    price_in: 0.0003
+    price_out: 0.0006
+    timeout: 30
+    temperature: 0.0
+
+  # 备用厂商，用于降级与多模型横向评测。配置 DEEPSEEK_API_KEY 后生效。
+  light_alt:
     provider: deepseek
     model: deepseek-chat
     price_in: 0.0005

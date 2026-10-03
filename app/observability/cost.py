@@ -40,6 +40,26 @@ class TokenUsage:
         }
 
 
+def merge_usage(prev: dict | None, usage: TokenUsage) -> dict:
+    """把一次调用的用量累加进已有统计。
+
+    by_profile 必须逐项相加而非字典展开合并：同一个 profile 在一次请求中
+    会被调用多次（路由一次、生成一次），字典展开会让后者覆盖前者，
+    表现为成本凭空变少——成本是核心指标，不能有这种静默丢失。
+    """
+    prev = prev or {}
+    cur = usage.to_dict()
+    by_profile = dict(prev.get("by_profile") or {})
+    for name, cost in (cur.get("by_profile") or {}).items():
+        by_profile[name] = round(by_profile.get(name, 0.0) + cost, 6)
+    return {
+        "in": cur.get("in", 0) + prev.get("in", 0),
+        "out": cur.get("out", 0) + prev.get("out", 0),
+        "cost_cny": round(cur.get("cost_cny", 0.0) + prev.get("cost_cny", 0.0), 6),
+        "by_profile": by_profile,
+    }
+
+
 def estimate_cost(profile: str, prompt_tokens: int, completion_tokens: int) -> float:
     """按 models.yaml 的价格表折算。价格单位为元 / 1K tokens。"""
     try:

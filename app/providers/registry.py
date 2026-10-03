@@ -132,6 +132,11 @@ def get_chat(profile: str = "strong", **overrides: Any) -> BaseChatModel:
         "timeout": spec.timeout,
         "temperature": spec.temperature,
         "max_retries": 0,
+        # 必须默认开启：在 astream_events 环境下 LangChain 会把 ainvoke
+        # 也转成流式执行以产生 token 事件，而流式响应默认不回传 token 用量。
+        # 不开的话，凡是跑在图里的调用成本统计全是 0——而且不报错，
+        # 只是账面上悄悄少了一截（M2 实测，路由与闲聊节点全部归零）。
+        "stream_usage": True,
     }
     params.update(overrides)
     return ChatOpenAI(**params)
