@@ -16,7 +16,7 @@
 | **M0** | 骨架与地基：配置体系、Provider Registry、三存储连接、健康探针、Langfuse | ✅ 完成 |
 | **M1** | 离线入库链路：解析 → 分块 → 表格元数据 → 向量化 → 双写 | ✅ 完成 |
 | **M2** | 在线 RAG 与首个可演示版本 | ✅ 完成 |
-| M3 | 评估体系与基线（320 条评估集） | ⬜ |
+| **M3** | 评估体系与基线 | 🟡 框架完成，评估集待扩充 |
 | M4 | 检索优化消融（顺序 / 交叉 / 逆向三阶段） | ⬜ |
 | M5 | Agent 能力（工具、护栏、Checkpoint、HITL） | ⬜ |
 | M6 | 成本优化与交付包装 | ⬜ |
@@ -136,6 +136,33 @@ POST /api/v1/chat/stream   流式，事件：meta / route / step / token / citat
 
 两家公司量纲不同（元 / 千元），均被正确声明并换算——这是量纲处理链路的最终兑现。
 
+### 8. 跑评估
+
+```bash
+python -m eval.run --load eval/datasets/seed.jsonl --dataset seed   # 首次导入
+python -m eval.run --dataset seed                                   # 用当前实验配置评估
+python -m eval.run --dataset seed --exp exp01_baseline              # 指定实验横向对比
+```
+
+结果写入 PG 的 `eval_runs` / `eval_results`，并生成 `eval/reports/run_XXXX_*.md`。
+历次结果汇总见 [`docs/benchmarks.md`](docs/benchmarks.md)。
+
+主指标是**端到端答案正确率**，全部为确定性判定（数值按单位归一后 ±0.5% 容差），
+不调用模型评判——没有评判噪声、成本近似为零、对外无需解释。
+所有指标以 bootstrap 95% 置信区间报告：**两组配置的区间重叠时不得声称有提升**。
+
+当前基线（`exp02_heading`，15 题种子集）：
+
+| 指标 | 值 |
+|---|---|
+| 正确率 | 73.3% [53.3, 93.3] |
+| 量纲声明率 | 100% [100, 100] |
+| Recall@K | 90.9% [72.7, 100] |
+| 误答率 | 0% [0, 0] |
+
+> 15 题的置信区间宽达 40 个百分点，只能用于定位问题、不能用于下结论。
+> 评估集需扩到数百条才有判别力。
+
 ---
 
 ## 环境踩坑记录
@@ -150,6 +177,9 @@ POST /api/v1/chat/stream   流式，事件：meta / route / step / token / citat
 | MinIO 启动失败，9001 端口被占 | 9001 落在 Windows 系统保留端口范围内（占用进程为 System PID 4） | 不暴露 9001（Milvus 走容器网络访问 minio:9000，宿主机不需要） |
 | 数据库容器权限错误 | Podman rootless 在 WSL 中对 Windows 目录无写权限 | 用命名卷而非绑定挂载到 `./volumes/` |
 | 全局 `python` 指向 Store 占位符 | Windows 的应用执行别名拦截 | 用 venv 内的解释器，或关闭设置里的 python.exe 别名 |
+| 配置文件变乱码、取值莫名为空 | PowerShell 的 `Get-Content \| Set-Content` 按系统 GBK 解码 UTF-8 中文，产生二次编码（`──` → `鈹€`），并可能把注释行与配置行挤成一行 | **不要用 PowerShell 改含中文的配置文件**。`.env`、`alembic.ini` 这类文件用编辑器或显式指定编码的脚本修改 |
+| 成本统计里某个模型始终为 0 | 在 `astream_events` 环境下 LangChain 会把 `ainvoke` 转为流式执行，而流式响应默认不回传 token 用量 | Provider 层统一 `stream_usage=True`，不逐处添加 |
+| 前端收不到任何流式 token | 节点内手动传 `config` 覆盖了运行时注入的 callbacks，事件链断开（Langfuse trace 同时失效） | 用 `merge_configs` 与注入的 config 合并，不要整个替换 |
 
 另：实际安装的依赖版本显著高于初版约束（langchain 1.x、langgraph 1.x、
 langfuse 4.x、pymilvus 3.x），均已验证兼容并收紧了版本范围。

@@ -82,7 +82,15 @@ def test_document_tracks_index_cost():
 
 
 def test_all_tables_registered():
-    assert set(Base.metadata.tables) == {"documents", "chunks", "financial_metrics"}
+    assert set(Base.metadata.tables) == {
+        "documents",
+        "chunks",
+        "financial_metrics",
+        "eval_datasets",
+        "eval_items",
+        "eval_runs",
+        "eval_results",
+    }
 
 
 # ── Milvus collection 定义 ──────────────────────────────

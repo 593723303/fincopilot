@@ -11,6 +11,7 @@ from decimal import Decimal
 
 from sqlalchemy import (
     BigInteger,
+    Boolean,
     CheckConstraint,
     DateTime,
     ForeignKey,
@@ -23,7 +24,7 @@ from sqlalchemy import (
     UniqueConstraint,
     func,
 )
-from sqlalchemy.dialects.postgresql import ARRAY
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -122,6 +123,149 @@ class Chunk(Base):
         CheckConstraint("level IN (0, 1)", name="ck_chunks_level"),
         CheckConstraint("chunk_type IN ('text', 'table')", name="ck_chunks_type"),
         Index("ix_chunks_doc_strategy", "doc_id", "strategy"),
+    )
+
+
+class EvalDataset(Base):
+    """评估集。按版本管理——评估集变了，历史指标就不可比。"""
+
+    __tablename__ = "eval_datasets"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    name: Mapped[str] = mapped_column(String(32), unique=True, comment="如 v1 / smoke")
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    item_count: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    items: Mapped[list[EvalItem]] = relationship(
+        back_populates="dataset", cascade="all, delete-orphan"
+    )
+
+
+# 四类题目对应架构 §12.1 的评估集构成
+EVAL_CATEGORIES = ("fact", "table", "multihop", "refuse")
+
+
+class EvalItem(Base):
+    """一条评估题目。
+
+    数值题要单独存 numeric_value 与 unit：主指标按「单位归一后 ±0.5% 容差」
+    判定，拿字符串比对会把 1,476.94 与 1476.94 判成不同答案（ADR-014）。
+    """
+
+    __tablename__ = "eval_items"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    dataset_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("eval_datasets.id", ondelete="CASCADE"), index=True
+    )
+
+    question: Mapped[str] = mapped_column(Text)
+    category: Mapped[str] = mapped_column(String(16), index=True, comment="fact|table|multihop|refuse")
+    difficulty: Mapped[str | None] = mapped_column(
+        String(24), nullable=True, comment="表格题再分层：单表直读/跨页/合并单元格/需换算/易混科目"
+    )
+
+    ground_truth: Mapped[str | None] = mapped_column(Text, nullable=True, comment="标准答案文本")
+    # 数值题的结构化答案，用于容差匹配
+    numeric_value: Mapped[Decimal | None] = mapped_column(Numeric(24, 4), nullable=True)
+    unit: Mapped[str | None] = mapped_column(String(8), nullable=True)
+    # 科目全称，用于校验模型是否用了正确口径
+    metric_name: Mapped[str | None] = mapped_column(String(128), nullable=True)
+
+    expected_doc_keys: Mapped[list[str] | None] = mapped_column(ARRAY(String(64)), nullable=True)
+    expected_pages: Mapped[list[int] | None] = mapped_column(ARRAY(Integer), nullable=True)
+
+    source: Mapped[str] = mapped_column(String(24), default="manual", comment="manual|finglm")
+    # 未复核的题目不参与评分：评估集本身错了，所有指标都是假的
+    verified: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    note: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    dataset: Mapped[EvalDataset] = relationship(back_populates="items")
+
+    __table_args__ = (
+        CheckConstraint(f"category IN {EVAL_CATEGORIES}", name="ck_eval_items_category"),
+    )
+
+
+class EvalRun(Base):
+    """一次评估运行。
+
+    config_snapshot 必须完整记录实验配置：指标只有与配置绑定才有意义，
+    否则事后无法回答「这个 89% 是在什么设置下跑出来的」。
+    """
+
+    __tablename__ = "eval_runs"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    dataset_name: Mapped[str] = mapped_column(String(32), index=True)
+    exp_id: Mapped[str] = mapped_column(String(48), index=True)
+    config_snapshot: Mapped[dict] = mapped_column(JSONB)
+    git_sha: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    note: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    item_count: Mapped[int] = mapped_column(Integer, default=0)
+    # 汇总指标与其置信区间。区间重叠即不得声称有提升（ADR-015）
+    metrics: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+
+    total_cost: Mapped[Decimal | None] = mapped_column(Numeric(12, 6), nullable=True)
+    # 评估自身的模型消耗单独计量，不与主流程成本混在一起（架构 §14.6）
+    judge_cost: Mapped[Decimal | None] = mapped_column(Numeric(12, 6), nullable=True)
+
+    status: Mapped[str] = mapped_column(String(16), default="running")
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    results: Mapped[list[EvalResult]] = relationship(
+        back_populates="run", cascade="all, delete-orphan"
+    )
+
+
+class EvalResult(Base):
+    """单题评估结果。
+
+    逐题存储而非只存汇总：bootstrap 重采样需要原始的逐题对错，
+    只存平均值就算不出置信区间。
+    """
+
+    __tablename__ = "eval_results"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    run_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("eval_runs.id", ondelete="CASCADE"), index=True
+    )
+    item_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("eval_items.id", ondelete="CASCADE"), index=True
+    )
+    category: Mapped[str] = mapped_column(String(16), index=True)
+
+    answer: Mapped[str | None] = mapped_column(Text, nullable=True)
+    refused: Mapped[bool] = mapped_column(Boolean, default=False)
+    retrieved_uids: Mapped[list[str] | None] = mapped_column(ARRAY(String(128)), nullable=True)
+
+    # ── 主指标：确定性判定，无评判噪声 ──
+    is_correct: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    numeric_ok: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    unit_ok: Mapped[bool | None] = mapped_column(Boolean, nullable=True, comment="是否声明了正确单位")
+
+    # ── 辅助指标：用于归因，不作验收 ──
+    recall_at_k: Mapped[float | None] = mapped_column(Numeric(5, 4), nullable=True)
+    faithfulness: Mapped[float | None] = mapped_column(Numeric(5, 4), nullable=True)
+    answer_relevancy: Mapped[float | None] = mapped_column(Numeric(5, 4), nullable=True)
+
+    latency_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    cost: Mapped[Decimal | None] = mapped_column(Numeric(12, 6), nullable=True)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    run: Mapped[EvalRun] = relationship(back_populates="results")
+
+    __table_args__ = (
+        UniqueConstraint("run_id", "item_id", name="uq_result_per_item"),
+        Index("ix_results_run_category", "run_id", "category"),
     )
 
 
