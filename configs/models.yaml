@@ -1,0 +1,69 @@
+# Provider Registry 配置表
+#
+# 架构 ADR-004：各厂商均兼容 OpenAI 接口，行为无差异，
+# 因此抽象层只是「配置表 + 工厂函数」，不是类继承体系。
+# 新增厂商 = 在这里加一行，不写任何代码。
+#
+# 价格单位：元 / 1K tokens。以各平台公布价为准，变动后需同步更新，
+# 否则成本核算会失真（成本是本项目的核心指标之一）。
+
+providers:
+  bailian:
+    base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
+    api_key_env: DASHSCOPE_API_KEY
+  deepseek:
+    base_url: https://api.deepseek.com/v1
+    api_key_env: DEEPSEEK_API_KEY
+  ark:
+    base_url: https://ark.cn-beijing.volces.com/api/v3
+    api_key_env: ARK_API_KEY
+  vllm:
+    base_url: http://localhost:8000/v1
+    api_key_env: VLLM_API_KEY
+
+profiles:
+  # 强模型：最终答案生成
+  strong:
+    provider: bailian
+    model: qwen-plus
+    price_in: 0.0008
+    price_out: 0.0020
+    timeout: 60
+    temperature: 0.1
+
+  # 轻模型：路由、查询改写等高频低难度任务
+  light:
+    provider: deepseek
+    model: deepseek-chat
+    price_in: 0.0005
+    price_out: 0.0015
+    timeout: 30
+    temperature: 0.0
+
+  # 评判模型：RAGAS 使用。刻意选用与 strong 不同的厂商，
+  # 规避「同一模型既生成又评判」的自我偏好偏差（架构 §12.2）
+  judge:
+    provider: deepseek
+    model: deepseek-chat
+    price_in: 0.0005
+    price_out: 0.0015
+    timeout: 60
+    temperature: 0.0
+
+embeddings:
+  default:
+    provider: bailian
+    model: text-embedding-v4
+    dim: 1024
+    price_in: 0.0005
+    batch_size: 64
+
+rerank:
+  default:
+    provider: bailian
+    model: gte-rerank-v2
+
+# 主模型不可用时的降级顺序（架构 §10.1 降级矩阵）
+fallback:
+  strong: [light]
+  light: [strong]

@@ -1,0 +1,71 @@
+# 实验 exp01 —— 基线：纯向量检索 + 固定长度分块
+#
+# 架构 ADR-010：所有可对比的技术选择都必须是配置项，而不是代码分支。
+# exp_id 同时写入 Milvus 的 strategy 字段、缓存键前缀和 eval_runs 记录，
+# 保证不同实验之间互不污染（架构 §9）。
+
+exp_id: exp01_baseline
+description: "基线：纯向量检索 + 固定长度分块，不做任何优化"
+
+chunking:
+  strategy: fixed            # fixed | recursive | heading
+  chunk_size: 512
+  overlap: 64
+  parent_child: false
+  table_atomic: false
+  table_metadata: false
+  cross_page_merge: false
+
+retrieval:
+  mode: dense                # dense | sparse | hybrid
+  top_k_dense: 5
+  top_k_sparse: 0
+  fusion: none
+  filters_pushdown: true
+
+rerank:
+  enabled: false
+  model: gte-rerank-v2
+  top_n: 5
+
+query_transform:
+  coref_resolution: true     # 多轮指代消解，任何实验都开启
+  hyde: false
+  decompose: false
+
+parent_expansion:
+  enabled: false
+  dedup_by_parent: true
+  token_budget: 6000
+  keep_table_intact: true
+
+generation:
+  profile: strong
+  require_citation: true
+  require_unit_declaration: true
+  relevance_threshold: 0.35
+  max_retry_on_low_relevance: 1
+
+cache:
+  exact: true
+  semantic: false            # 基线不开语义缓存，避免干扰指标
+  similarity_threshold: 0.97
+  entity_constraint: strict
+  audit_sample_rate: 0.05
+
+router:
+  profile: light
+  confidence_threshold: 0.7
+  fallback_branch: agent     # 低置信度走 agent（能力超集），判错代价仅为成本
+
+agent:
+  max_steps: 8
+  max_tool_errors: 3
+  budget_cny: 0.15
+
+eval:
+  dataset: v1
+  bootstrap_rounds: 1000
+  judge_profile: judge
+  numeric_tolerance: 0.005
+  stratified_report: true

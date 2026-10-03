@@ -1,0 +1,30 @@
+# 非敏感的运行时配置。敏感项（API Key、连接串）走环境变量，见 .env.example
+
+app:
+  name: FinCopilot
+  version: 0.1.0
+
+server:
+  cors_origins: ["*"]
+  request_timeout: 120
+
+limits:
+  max_question_length: 500
+  rate_limit_per_minute: 30
+
+milvus:
+  collection_chunks: fin_chunks
+  collection_query_cache: query_cache
+  index:
+    type: HNSW
+    metric: COSINE
+    M: 16
+    efConstruction: 200
+  search:
+    efSearch: 64
+    rrf_k: 60
+
+ingestion:
+  embed_batch_size: 64
+  embed_max_retries: 3
+  worker_concurrency: 2

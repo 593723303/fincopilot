@@ -1,0 +1,14 @@
+# 统一换行符为 LF —— 本项目会在 Linux 容器与 CI 中运行，
+# 若让 Windows 的 CRLF 进仓库，跨平台 diff 会变成整文件变更。
+* text=auto eol=lf
+
+# Windows 专用脚本保留 CRLF
+*.ps1 text eol=crlf
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# 二进制与数据文件不做转换
+*.pdf binary
+*.png binary
+*.jpg binary
+*.jsonl -text

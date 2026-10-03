@@ -1,0 +1,115 @@
+# 本地开发环境 —— 与线上等价的三个存储
+#   podman compose up -d
+#   podman compose down      停止（保留数据）
+#   podman compose down -v   停止并清空数据
+#
+# 架构文档 §15 的硬约束：整套系统必须能在本机离线跑通（模型调用除外）。
+#
+# 镜像版本对齐 Milvus 官方 standalone 部署配置：
+#   - minio 用 milvusdb/minio 而非 minio/minio —— 后者在 Docker Hub 上的
+#     RELEASE tag 已不可拉取，Milvus 官方镜像了一份到自己的命名空间
+#   - Milvus 已进入 3.x，与 pymilvus 3.x 对应
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: fincopilot-pg
+    environment:
+      POSTGRES_USER: fincopilot
+      POSTGRES_PASSWORD: fincopilot
+      POSTGRES_DB: fincopilot
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U fincopilot"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    container_name: fincopilot-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # ── Milvus standalone 三件套：etcd（元数据）+ minio（对象存储）+ milvus ──
+  etcd:
+    image: quay.io/coreos/etcd:v3.5.25
+    container_name: fincopilot-etcd
+    environment:
+      - ETCD_AUTO_COMPACTION_MODE=revision
+      - ETCD_AUTO_COMPACTION_RETENTION=1000
+      - ETCD_QUOTA_BACKEND_BYTES=4294967296
+      - ETCD_SNAPSHOT_COUNT=50000
+    volumes:
+      - etcddata:/etcd
+    # advertise 地址必须是服务名而非 127.0.0.1，
+    # 否则 milvus 容器拿到的是 etcd 自己的回环地址，连不上
+    command: etcd -advertise-client-urls=http://etcd:2379 -listen-client-urls http://0.0.0.0:2379 --data-dir /etcd
+    healthcheck:
+      test: ["CMD", "etcdctl", "endpoint", "health"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+
+  minio:
+    image: milvusdb/minio:RELEASE.2024-12-18T13-15-44Z
+    container_name: fincopilot-minio
+    environment:
+      MINIO_ACCESS_KEY: minioadmin
+      MINIO_SECRET_KEY: minioadmin
+    # 不暴露 9001 控制台端口：Milvus 通过容器网络访问 minio:9000，
+    # 宿主机不需要访问 MinIO。本机 9001 已被系统进程占用，暴露也会冲突。
+    # 确需查看控制台时临时加 "19001:9001" 映射即可。
+    volumes:
+      - miniodata:/minio_data
+    command: minio server /minio_data --console-address ":9001"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+
+  milvus:
+    image: milvusdb/milvus:v3.0.2
+    container_name: fincopilot-milvus
+    command: ["milvus", "run", "standalone"]
+    security_opt:
+      - seccomp:unconfined
+    environment:
+      MINIO_REGION: us-east-1
+      ETCD_ENDPOINTS: etcd:2379
+      MINIO_ADDRESS: minio:9000
+    volumes:
+      - milvusdata:/var/lib/milvus
+    ports:
+      - "19530:19530"
+      - "9091:9091"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9091/healthz"]
+      interval: 30s
+      start_period: 90s
+      timeout: 20s
+      retries: 3
+    depends_on:
+      - etcd
+      - minio
+
+# 命名卷 —— 不用绑定挂载到 Windows 目录。
+# Podman rootless 运行在 WSL 中时，容器内用户对 Windows 文件系统没有写权限，
+# 绑定挂载会导致数据库容器启动失败。命名卷由容器引擎在 Linux 侧管理，无此问题。
+volumes:
+  pgdata:
+  redisdata:
+  etcddata:
+  miniodata:
+  milvusdata:
