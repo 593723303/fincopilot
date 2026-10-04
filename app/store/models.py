@@ -142,8 +142,10 @@ class EvalDataset(Base):
     )
 
 
-# 四类题目对应架构 §12.1 的评估集构成
-EVAL_CATEGORIES = ("fact", "table", "multihop", "refuse")
+# 题目分类。scope（口径辨析）是 v2 新增的一类：同一科目在合并与母公司
+# 两个口径下数值不同，考的不是「能不能找到数」，而是「分不分得清
+# 它出自哪张表」——这是本项目的差异化考点，并入 table 会被稀释掉。
+EVAL_CATEGORIES = ("fact", "table", "multihop", "scope", "refuse")
 
 
 class EvalItem(Base):
@@ -161,7 +163,7 @@ class EvalItem(Base):
     )
 
     question: Mapped[str] = mapped_column(Text)
-    category: Mapped[str] = mapped_column(String(16), index=True, comment="fact|table|multihop|refuse")
+    category: Mapped[str] = mapped_column(String(16), index=True, comment="fact|table|multihop|scope|refuse")
     difficulty: Mapped[str | None] = mapped_column(
         String(24), nullable=True, comment="表格题再分层：单表直读/跨页/合并单元格/需换算/易混科目"
     )

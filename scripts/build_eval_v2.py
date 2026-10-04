@@ -46,11 +46,13 @@ OUT_OF_CORPUS = [
 ]
 
 
-def load_draft() -> dict[str, list[dict]]:
+def load_draft() -> tuple[dict[str, list[dict]], dict[str, list[dict]]]:
     if not DRAFT.exists():
-        print(f"底稿不存在：{DRAFT}\n先执行 python -m scripts.extract_key_metrics")
+        print(f"底稿不存在：{DRAFT}")
+        print("先执行 python -m scripts.extract_key_metrics")
         sys.exit(1)
-    return json.loads(DRAFT.read_text(encoding="utf-8"))
+    data = json.loads(DRAFT.read_text(encoding="utf-8"))
+    return data["metrics"], data["scope_pairs"]
 
 
 def company_names() -> dict[str, str]:
@@ -137,6 +139,44 @@ def multihop_items(code: str, name: str, rows: list[dict]) -> list[dict]:
     return out
 
 
+def scope_items(code: str, name: str, pairs: list[dict], doc_year: int) -> list[dict]:
+    """口径辨析题：同一科目问合并、再问母公司。
+
+    这是本项目的核心考点。两张报表在 ADR-019 之前解析出的块逐字相同，
+    模型只能猜；成对出题使「蒙对一个」无法得分——两道都答对才说明
+    它真的看了口径。
+    """
+    out = []
+    for pair in pairs:
+        for scope in ("合并", "母公司"):
+            row = pair[scope]
+            out.append(
+                {
+                    "question": f"{name}{doc_year}年{scope}报表口径的{pair['metric']}是多少？",
+                    "category": "scope",
+                    "difficulty": "口径辨析",
+                    "ground_truth": f"{row['raw']}{row['unit']}",
+                    "numeric_value": row["value"],
+                    "unit": row["unit"],
+                    "metric_name": f"{scope}{pair['metric']}",
+                    "expected_doc_keys": [f"{code}_{doc_year}_annual"],
+                    # 页码取整张表的区间：跨页表的目标行常落在续页上，
+                    # 只标首页会把本来召回正确的检索记成失败
+                    "expected_pages": list(
+                        range(row["page"], max(row.get("page_end") or 0, row["page"]) + 1)
+                    ),
+                    "source": "auto_extracted",
+                    "verified": True,
+                    "note": (
+                        f"{row['heading']} 第{row['page']}页；"
+                        f"另一口径为 {pair['合并' if scope == '母公司' else '母公司']['raw']}，"
+                        "两者不可混用"
+                    ),
+                }
+            )
+    return out
+
+
 def refuse_items(names: set[str]) -> list[dict]:
     out = []
     for company, what in OUT_OF_CORPUS:
@@ -165,16 +205,16 @@ def main() -> int:
     args = ap.parse_args()
 
     rng = random.Random(SEED)
-    draft = load_draft()
+    draft, scope_pairs = load_draft()
     names = company_names()
 
     items: list[dict] = []
-    stats: list[tuple[str, int, int]] = []
+    stats: list[tuple[str, int, int, int]] = []
     for code, rows in sorted(draft.items()):
         name = names.get(code, code)
         keep = usable(rows)
         if not keep:
-            stats.append((f"{code} {name}", 0, 0))
+            stats.append((f"{code} {name}", 0, 0, 0))
             continue
         tables = table_items(code, name, keep)
         rng.shuffle(tables)
@@ -182,8 +222,10 @@ def main() -> int:
         multis = multihop_items(code, name, keep)
         rng.shuffle(multis)
         multis = multis[:4]
-        items.extend(tables + multis)
-        stats.append((f"{code} {name}", len(tables), len(multis)))
+        doc_year = max(r["year"] for r in keep)
+        scopes = scope_items(code, name, scope_pairs.get(code, []), doc_year)
+        items.extend(tables + multis + scopes)
+        stats.append((f"{code} {name}", len(tables), len(multis), len(scopes)))
 
     items.extend(refuse_items(set(names.values())))
 
@@ -192,9 +234,9 @@ def main() -> int:
     seen = {it["question"] for it in items}
     merged = items + [it for it in v1 if it["question"] not in seen]
 
-    print(f"{'公司':<18}{'表格题':>8}{'多跳题':>8}")
-    for label, a, b in stats:
-        print(f"{label:<18}{a:>8}{b:>8}")
+    print(f"{'公司':<18}{'表格题':>8}{'多跳题':>8}{'口径题':>8}")
+    for label, n_tab, n_multi, n_scope in stats:
+        print(f"{label:<18}{n_tab:>8}{n_multi:>8}{n_scope:>8}")
     by_cat: dict[str, int] = defaultdict(int)
     for it in merged:
         by_cat[it["category"]] += 1

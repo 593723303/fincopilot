@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 from scripts.build_eval_v2 import usable
+from scripts.extract_key_metrics import corroborate
 
 
 def _row(metric: str, year: int, value: float, *, corroborated=True, unit="元") -> dict:
@@ -56,3 +57,45 @@ def test_keeps_other_metrics_when_one_group_is_dropped():
         _row("营业收入", 2024, 20.0),
     ]
     assert {r["metric"] for r in usable(rows)} == {"营业收入"}
+
+
+# ── 原文对账必须覆盖整张表的页码区间 ────────────────────
+
+
+class _FakePdf:
+    """只提供 get_text 与 page_count 的最小替身。"""
+
+    def __init__(self, pages: list[str]) -> None:
+        self._pages = pages
+
+    @property
+    def page_count(self) -> int:
+        return len(self._pages)
+
+    def __getitem__(self, idx: int):
+        text = self._pages[idx]
+        return type("P", (), {"get_text": lambda self=None, _t=text: _t})()
+
+
+def test_corroborate_finds_value_on_continuation_page():
+    """跨页合并的表保留首页页码，目标行却常在续页上。
+
+    实测茅台合并现金流量表 page_start=64，而「经营活动产生的现金流量净额」
+    印在第 65 页。只查首页会把它判成对不上而整条丢弃，
+    口径辨析题因此一道都生成不出来。
+    """
+    pdf = _FakePdf(["第64页没有这个数", "61,522,204,989.35 在第65页"])
+    assert corroborate(pdf, 1, "61,522,204,989.35", 2) is True
+    assert corroborate(pdf, 1, "61,522,204,989.35") is False
+
+
+def test_corroborate_rejects_value_absent_from_the_table():
+    """对账的作用是证伪：这个数压根不在这张表覆盖的页上。"""
+    pdf = _FakePdf(["无关内容", "也无关"])
+    assert corroborate(pdf, 1, "12,345.67", 2) is False
+
+
+def test_corroborate_ignores_thousand_separators():
+    """原文可能不带千分位，不能因为写法不同就判成对不上。"""
+    pdf = _FakePdf(["61522204989.35"])
+    assert corroborate(pdf, 1, "61,522,204,989.35") is True

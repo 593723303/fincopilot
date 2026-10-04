@@ -22,7 +22,7 @@ from pathlib import Path
 
 import pymupdf
 
-from app.rag.pdf_parser import parse_pdf
+from app.rag.pdf_parser import ParsedDocument, parse_pdf
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 RAW_DIR = PROJECT_ROOT / "data" / "raw"
@@ -65,27 +65,35 @@ def year_columns(header_cells: list[str]) -> dict[int, int]:
     return out
 
 
-def corroborate(doc_pdf: pymupdf.Document, page_no: int, raw: str) -> bool:
-    """用**原始页面文本**核对这个数字确实印在该页上。
+def corroborate(doc_pdf: pymupdf.Document, page_start: int, raw: str, page_end: int = 0) -> bool:
+    """用**原始页面文本**核对这个数字确实印在这张表覆盖的页上。
 
     这一步不能省。底稿是解析器抽的，而被评估的系统用的也是同一个解析器——
     解析器要是把列读错了，标准答案和系统回答会一起错，评估照样全绿。
     `get_text()` 走的是另一条代码路径（不经过 find_tables 与表格重建），
-    能独立地证伪「这个数压根不在这一页上」。
+    能独立地证伪「这个数压根不在这张表里」。
 
-    注意它只能证伪，不能证实归属：同一页上 2024 年的数也在，
-    所以年份对不对仍然要人工看列头。
+    必须查 page_start..page_end 整个区间，不能只查 page_start：
+    跨页合并的表保留首页页码，而目标行往往在续页上——
+    实测茅台合并现金流量表 page_start=64，「经营活动产生的现金流量净额」
+    那一行印在 65 页，只查首页会把它判成「对不上」而整条丢弃，
+    口径辨析题因此一道都生成不出来。
+
+    它只能证伪，不能证实归属：同一页上别的年份、别的口径的数也在，
+    所以年份与口径仍然要靠列头与表标题。
     """
-    idx = page_no - 1
-    if not 0 <= idx < doc_pdf.page_count:
-        return False
-    text = doc_pdf[idx].get_text() or ""
-    return raw in text or raw.replace(",", "") in text.replace(",", "")
+    last = max(page_end or page_start, page_start)
+    for page_no in range(page_start, last + 1):
+        idx = page_no - 1
+        if not 0 <= idx < doc_pdf.page_count:
+            continue
+        text = doc_pdf[idx].get_text() or ""
+        if raw in text or raw.replace(",", "") in text.replace(",", ""):
+            return True
+    return False
 
 
-def extract(pdf: Path) -> list[dict]:
-    doc = parse_pdf(pdf)
-    doc_pdf = pymupdf.open(pdf)
+def extract(doc: ParsedDocument, doc_pdf: pymupdf.Document) -> list[dict]:
     rows: list[dict] = []
     for blk in doc.blocks:
         if blk.kind != "table" or not SUMMARY_HEADING.search(blk.heading_path or ""):
@@ -122,10 +130,82 @@ def extract(pdf: Path) -> list[dict]:
                         "page": blk.page_start,
                         "heading": blk.heading_path,
                         "source_line": line[:160],
-                        "corroborated": corroborate(doc_pdf, blk.page_start, raw),
+                        "corroborated": corroborate(doc_pdf, blk.page_start, raw, blk.page_end),
                     }
                 )
     return rows
+
+
+# 合并与母公司差异最大、也最容易被问到的几个科目
+SCOPE_METRICS = [
+    "经营活动产生的现金流量净额",
+    "营业收入",
+    "营业总收入",
+    "资产总计",
+    "净利润",
+]
+SCOPE_TITLE = re.compile(r"^(合并|母公司)(资产负债表|利润表|现金流量表)$")
+# 两个口径的数值差异要足够大，否则这道题区分不出模型有没有看口径
+SCOPE_MIN_GAP = 0.05
+
+
+def extract_scope_pairs(doc: ParsedDocument, doc_pdf: pymupdf.Document) -> list[dict]:
+    """抽取「同一科目在合并口径与母公司口径下的两个数」。
+
+    这是本项目差异化所在：两张表在解析前逐字相同，口径标签是 ADR-019
+    加上去的。拿它出题，等于直接考「模型有没有看口径」——
+    而这类题从「主要会计数据」汇总表里是抽不出来的，那张表只有合并口径。
+    """
+    # (报表类型, 科目) → {口径: 行}
+    found: dict[tuple[str, str], dict[str, dict]] = {}
+    for blk in doc.blocks:
+        if blk.kind != "table":
+            continue
+        last = (blk.heading_path or "").split(" > ")[-1]
+        m = SCOPE_TITLE.match(last)
+        if not m or not blk.unit:
+            continue
+        scope, statement = m.group(1), m.group(2)
+        for line in blk.text.splitlines():
+            if not line.startswith("|"):
+                continue
+            parsed = parse_row(line)
+            if not parsed:
+                continue
+            name, cells = parsed
+            if name not in SCOPE_METRICS:
+                continue
+            for raw in cells:  # 取第一个能解析成数字的单元格 = 本期
+                cleaned = raw.replace(" ", "")
+                if not cleaned or not NUMBER.fullmatch(cleaned):
+                    continue
+                found.setdefault((statement, name), {}).setdefault(
+                    scope,
+                    {
+                        "raw": raw,
+                        "value": float(cleaned.replace(",", "")),
+                        "unit": blk.unit,
+                        "page": blk.page_start,
+                        "page_end": blk.page_end,
+                        "heading": blk.heading_path,
+                        "corroborated": corroborate(doc_pdf, blk.page_start, raw, blk.page_end),
+                    },
+                )
+                break
+
+    out: list[dict] = []
+    for (statement, name), by_scope in found.items():
+        if {"合并", "母公司"} - by_scope.keys():
+            continue
+        a, b = by_scope["合并"], by_scope["母公司"]
+        if not (a["corroborated"] and b["corroborated"]):
+            continue
+        if a["unit"] != b["unit"]:
+            continue  # 量纲不同就不是一个可比的对子，弃用
+        if a["value"] == 0 or abs(a["value"] - b["value"]) / abs(a["value"]) < SCOPE_MIN_GAP:
+            continue  # 两个数差不多，答错也看不出来
+        out.append({"statement": statement, "metric": name, "合并": a, "母公司": b})
+    return out
 
 
 def main() -> int:
@@ -142,20 +222,28 @@ def main() -> int:
 
     OUT_DIR.mkdir(exist_ok=True)
     all_rows: dict[str, list[dict]] = {}
+    all_pairs: dict[str, list[dict]] = {}
     for pdf in pdfs:
         code = pdf.name.split("_")[0]
-        rows = extract(pdf)
+        doc_pdf = pymupdf.open(pdf)
+        parsed = parse_pdf(pdf)  # 解析很慢，两个抽取器共用这一次结果
+        rows = extract(parsed, doc_pdf)
         all_rows[code] = rows
+        all_pairs[code] = extract_scope_pairs(parsed, doc_pdf)
         units = {r["unit"] for r in rows}
         years = sorted({r["year"] for r in rows})
         bad = [r for r in rows if not r["corroborated"]]
         flag = f"  ⚠ {len(bad)} 条未在原页文本中找到" if bad else ""
         print(
-            f"{code} {pdf.name[:30]:32s} {len(rows):3d} 条  年份{years}  单位{units or '—'}{flag}"
+            f"{code} {pdf.name[:28]:30s} {len(rows):3d} 条  年份{years}  "
+            f"单位{units or '—'}  口径对 {len(all_pairs[code])}{flag}"
         )
 
     out = OUT_DIR / "key_metrics.json"
-    out.write_text(json.dumps(all_rows, ensure_ascii=False, indent=2), encoding="utf-8")
+    out.write_text(
+        json.dumps({"metrics": all_rows, "scope_pairs": all_pairs}, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
     print(f"\n底稿写入 {out}")
     print("注意：这是底稿，每条进评估集前必须人工核对页码与口径。")
     return 0
