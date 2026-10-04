@@ -1,14 +1,15 @@
 """LangGraph 主图装配。
 
-M2 的拓扑（Agent 分支在 M5 接入）：
+拓扑：
 
-    START → guard_in → analyze_query ─┬─ chat ──→ chat_node ─────────────→ END
-                                      └─ rag ──→ retrieve → grade ─┬─ retry → retrieve
-                                                                   ├─ refuse → END
-                                                                   └─ ok → generate → verify → END
+    START → guard_in → analyze_query ─┬─ chat  ──→ chat_node ────────────────→ END
+                                      ├─ agent ──→ agent_node（ReAct 循环）──→ END
+                                      └─ rag   ──→ retrieve → grade ─┬─ retry → retrieve
+                                                                     ├─ refuse → END
+                                                                     └─ ok → generate → verify → END
 
-路由判为 agent 时，当前降级走 rag 并标记 degraded——
-能力未实现就老实降级，不假装支持。
+三条分支的分工：chat 不检索；rag 单次检索即可回答；
+agent 处理需要多次检索或计算的问题（跨表加总、同比、跨公司对比）。
 """
 
 from __future__ import annotations
@@ -17,6 +18,7 @@ import logging
 
 from langgraph.graph import END, START, StateGraph
 
+from app.graph.nodes.agent import agent_node
 from app.graph.nodes.query import analyze_query
 from app.graph.nodes.rag import (
     chat_node,
@@ -53,12 +55,7 @@ def branch_after_analyze(state: GraphState) -> str:
     if route == "chat":
         return "chat"
     if route == "agent":
-        # M5 之前没有 Agent 能力，降级到 rag 并留痕，便于评估时区分
-        degraded = list(state.get("degraded") or [])
-        if "agent_not_available" not in degraded:
-            degraded.append("agent_not_available")
-            state["degraded"] = degraded
-        return "rag"
+        return "agent"
     return "rag"
 
 
@@ -81,6 +78,7 @@ def build_graph():
     graph.add_node("guard_in", guard_in)
     graph.add_node("analyze_query", analyze_query)
     graph.add_node("chat", chat_node)
+    graph.add_node("agent", agent_node)
     graph.add_node("retrieve", retrieve_node)
     graph.add_node("grade", grade_node)
     graph.add_node("generate", generate_node)
@@ -92,9 +90,11 @@ def build_graph():
     graph.add_conditional_edges(
         "analyze_query",
         branch_after_analyze,
-        {"chat": "chat", "rag": "retrieve", "end": END},
+        {"chat": "chat", "rag": "retrieve", "agent": "agent", "end": END},
     )
     graph.add_edge("chat", END)
+    # Agent 自带引用，无需再走 verify 的编号核验
+    graph.add_edge("agent", END)
     graph.add_edge("retrieve", "grade")
     graph.add_conditional_edges(
         "grade",

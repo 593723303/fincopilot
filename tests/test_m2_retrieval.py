@@ -124,11 +124,15 @@ def test_branch_chat():
     assert branch_after_analyze({"route": "chat"}) == "chat"
 
 
-def test_branch_agent_degrades_to_rag_with_mark():
-    """M5 之前没有 Agent 能力，降级要留痕以便评估时区分。"""
+def test_branch_agent_goes_to_agent():
+    """M5 起 Agent 分支已实现，不再降级到 rag。
+
+    这条原本断言的是「降级并留痕」。M5 落地后它从「保护性断言」
+    变成了「锁死旧行为」——改掉而不是删掉，是为了留下行为变更的痕迹。
+    """
     state: dict = {"route": "agent", "degraded": []}
-    assert branch_after_analyze(state) == "rag"
-    assert "agent_not_available" in state["degraded"]
+    assert branch_after_analyze(state) == "agent"
+    assert "agent_not_available" not in state["degraded"]
 
 
 def test_branch_after_grade_generates_when_relevant():
@@ -194,3 +198,62 @@ def test_max_score_on_empty():
 
 def test_max_score_picks_highest():
     assert max_score([_chunk("a", None), RetrievedChunk("b", "x", 0.9)]) == 0.9
+
+
+# ── 关键词查询去噪（run 0021 定位的检索失败） ──────────────
+
+
+@pytest.mark.asyncio
+async def test_keyword_query_strips_company_and_filler(monkeypatch):
+    """公司名已由标量过滤处理，留在关键词里只会稀释年份与科目名的权重。"""
+    from app.graph.nodes import rag as rag_mod
+
+    async def fake_corpus():
+        return [("600519", "贵州茅台", 2025)]
+
+    monkeypatch.setattr("app.graph.nodes.query.available_corpus", fake_corpus)
+    got = await rag_mod.keyword_query_of("贵州茅台2023年营业收入是多少？", ["600519"])
+    assert "贵州茅台" not in got
+    assert "是多少" not in got
+    assert "2023" in got and "营业收入" in got
+
+
+@pytest.mark.asyncio
+async def test_keyword_query_kept_intact_without_company_code():
+    """没抽到公司代码时过滤器兜不住，公司名必须留着。"""
+    from app.graph.nodes import rag as rag_mod
+
+    q = "贵州茅台2023年营业收入是多少？"
+    assert await rag_mod.keyword_query_of(q, []) == q
+
+
+# ── Agent：文本形式的工具调用必须被拦下（run 0025 实测缺陷） ──
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        'calculate\n{"expression": "82320067101.68 - 82293107655.25"}\n</tool_call>',
+        "<tool_call>retrieve_report",
+        '{"company": "600519", "year": 2025}',
+    ],
+)
+def test_malformed_tool_call_detected(text):
+    """小模型会把工具调用当正文吐出来，不拦就会原样返给用户。"""
+    from app.graph.nodes.agent import MALFORMED_CALL
+
+    assert MALFORMED_CALL.search(text) is not None
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "贵州茅台2025年营业收入为168,838,102,514.79元。",
+        "两者相差 26,959,446.43 元。",
+        "该表格的 expression 列为空。",
+    ],
+)
+def test_malformed_tool_call_does_not_misfire(text):
+    from app.graph.nodes.agent import MALFORMED_CALL
+
+    assert MALFORMED_CALL.search(text) is None

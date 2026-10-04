@@ -76,11 +76,13 @@ async def main() -> int:
     # 注意：get_collection_stats 的 row_count 是近似值，包含已标记删除
     # 但尚未 compaction 的行，会明显大于实际可查询数量。
     # 重建索引后用它判断"入库了多少"会得到误导性的结论，因此改用 query 计数。
+    #
+    # 计数还必须按 strategy 分开：不同分块策略的块共存于同一集合做实验隔离，
+    # 打总数会显示出「块数翻倍」的假象，让人误以为旧块没被清理。
     name = settings.yaml_get("milvus.collection_chunks", "fin_chunks")
-    live = len(
-        client.query(name, filter="report_year > 0", output_fields=["chunk_uid"], limit=16384)
-    )
-    print(f"  Milvus {name} 实际可查询 {live} 条向量")
+    rows = client.query(name, filter="report_year > 0", output_fields=["strategy"], limit=16384)
+    mine = sum(1 for r in rows if r.get("strategy") == exp.chunking.strategy)
+    print(f"  Milvus {name}：本策略({exp.chunking.strategy}) {mine} 条，集合内合计 {len(rows)} 条")
     return 0 if ok == len(results) else 1
 
 

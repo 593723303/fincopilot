@@ -42,8 +42,23 @@ _SYSTEM = """你是财报分析助手。只能依据提供的资料回答，不�
 2. **涉及数值时必须写明单位与科目全称**，例如「营业总收入 1,476.94 万元」，
    不可只写数字。单位以资料中【单位：X】的声明为准，不要自行换算或省略。
 3. 科目名称按资料原文写全，不要简写（「归属于上市公司股东的净利润」不可写成「净利润」）。
-4. 资料中没有依据的内容，直接说明「所提供资料中未找到相关信息」，不要推测或补充常识。
-5. 不提供任何投资建议、买卖推荐或价格预测。
+4. **财务数据默认取合并报表口径**。年报里同一科目往往有三处：
+   「近三年主要会计数据」摘要表、合并报表、母公司报表（章节名含「母公司」）。
+   除非问题明确问母公司，否则不得引用母公司数字——
+   两者差异可以很大（实测经营活动现金流净额相差三倍）。
+   摘要表与合并报表都可用，优先摘要表，因为它同时列出往年数据。
+5. 公司基本信息（股票代码、注册地址、联系电话、邮编、公司全称等）
+   同样在年报里（通常在「公司简介」一节），这些都属于可回答范围，
+   不要以「只能回答财务问题」为由拒答。
+6. 「营业收入」与「营业总收入」是两个不同科目，金额不同，问哪个取哪个，
+   不要互相替代；「净利润」与「归属于上市公司股东的净利润」同理。
+7. 问「同比/环比变化了多少」「增长了多少」时答案给百分比，
+   需要的话再补绝对额；只给绝对额等于没回答这个问题。
+8. **问题里的期间或科目在资料中不存在时，必须点明它不存在**，
+   不得用相近的数据顶替。例如「第五季度」——一年只有四个季度，
+   这时要回答「不存在第五季度」，而不是把第四季度的数给出去。
+9. 资料中没有依据的内容，直接说明「所提供资料中未找到相关信息」，不要推测或补充常识。
+10. 不提供任何投资建议、买卖推荐或价格预测。
 
 回答简洁，先给结论再给依据。"""
 
@@ -57,7 +72,7 @@ def _format_context(chunks: list[RetrievedChunk]) -> str:
     return "\n\n".join(parts)
 
 
-def _citations(chunks: list[RetrievedChunk]) -> list[dict]:
+def build_citations(chunks: list[RetrievedChunk]) -> list[dict]:
     return [
         {
             "idx": i,
@@ -77,6 +92,42 @@ def _citations(chunks: list[RetrievedChunk]) -> list[dict]:
 
 def _merge_usage(state: GraphState, usage: TokenUsage) -> dict:
     return merge_usage(state.get("usage"), usage)
+
+
+# 疑问句的壳：对 BM25 没有信息量，却实打实占据词频权重
+_FILLER = ("是多少", "多少", "是什么", "请问", "的具体数值", "吗", "呢", "？", "?", "，", ",")
+
+
+async def keyword_query_of(question: str, codes: list[str]) -> str:
+    """BM25 用的关键词查询：剥掉公司名与疑问词。
+
+    公司名已经由 company_code 标量过滤处理过了，再留在关键词里纯属噪声——
+    这份文档里每一页都写着「贵州茅台」，该词在文档内的区分度为零，
+    却会把真正有区分度的词（年份、科目名）的权重稀释掉。
+
+    实测对比（问 2023 年营业收入，答案在 p6「近三年主要会计数据」）：
+        「贵州茅台2023年营业收入是多少？」 → p6 进不了前 20，结果拒答
+        「2023年营业收入」                 → p6 排第 1
+    稠密检索仍用完整问题，语义匹配不受这种词频稀释影响。
+
+    没抽到公司代码时原样返回：此时过滤器兜不住，公司名还得留着。
+    """
+    if not codes:
+        return question
+    from app.graph.nodes.query import available_corpus, company_aliases
+
+    names: set[str] = set()
+    for code, name, _year in await available_corpus():
+        if code in codes and name:
+            names |= company_aliases(name)
+    out = question
+    # 长别名优先，否则先删掉「茅台」会把「贵州茅台」剩下半截
+    for alias in sorted(filter(None, names), key=len, reverse=True):
+        out = out.replace(alias, " ")
+    for word in _FILLER:
+        out = out.replace(word, " ")
+    out = " ".join(out.split())
+    return out or question
 
 
 async def retrieve_node(state: GraphState) -> GraphState:
@@ -104,8 +155,11 @@ async def retrieve_node(state: GraphState) -> GraphState:
         logger.info("第 %d 次重试：放宽过滤条件至 %s", retry, filters)
 
     query = state.get("rewritten") or state["question"]
+    keyword_query = await keyword_query_of(query, filters.company_codes)
+    if keyword_query != query:
+        logger.debug("关键词查询去噪：%s → %s", query, keyword_query)
 
-    chunks = await retrieve(milvus(), query, filters, exp, keyword_query=query)
+    chunks = await retrieve(milvus(), query, filters, exp, keyword_query=keyword_query)
     degraded: list[str] = list(state.get("degraded") or [])
 
     if not chunks:
@@ -220,7 +274,7 @@ async def generate_node(state: GraphState, config: RunnableConfig) -> GraphState
 
     return {
         "answer": text,
-        "citations": _citations(chunks),
+        "citations": build_citations(chunks),
         "messages": [AIMessage(content=text)],
         "usage": _merge_usage(state, usage),
     }

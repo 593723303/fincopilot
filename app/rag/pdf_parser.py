@@ -62,6 +62,8 @@ class TableContext:
     caption: str | None = None
     # 单位的来源层级，用于排查数值题错误时归因
     unit_source: str | None = None  # above | header | page | inherited
+    # 报表口径标题，如「合并现金流量表」「母公司现金流量表」
+    scope: str | None = None
 
 
 @dataclass
@@ -306,6 +308,16 @@ def scale_to_yuan(value: float, unit: str | None) -> float | None:
 # ── 表格渲染 ────────────────────────────────────────────
 
 
+# 合并 / 母公司是中文财报的第二个「量纲」问题，和元/千元一样必须跨页继承。
+# 三大报表每张横跨两三页，只有起始页印着「合并现金流量表」，续页没有任何标题。
+# 不继承的话，续页的块与另一口径的块在文本上完全一样——实测茅台 p64（合并）
+# 与 p66（母公司）解析出的块逐字相同，模型只能靠猜，而两者的经营活动现金流
+# 净额相差三倍（615 亿 vs 326 亿）。
+STATEMENT_SCOPE = re.compile(
+    r"(合并|母公司)(资产负债表|利润表|现金流量表|所有者权益变动表|综合收益表)"
+)
+
+
 def render_table(rows: list[list[str]], ctx: TableContext, heading: str) -> str:
     """把表格渲染为带量纲声明的 Markdown。
 
@@ -321,9 +333,13 @@ def render_table(rows: list[list[str]], ctx: TableContext, heading: str) -> str:
     lines: list[str] = []
     if head_bits:
         lines.append("【" + "　".join(head_bits) + "】")
+    # 口径写在 caption 之前：检索返回的是文本，模型看不到元数据，
+    # 口径若只存在元数据里，合并与母公司的数就会被混用
+    if ctx.scope:
+        lines.append(ctx.scope)
     if ctx.caption:
         lines.append(ctx.caption)
-    elif heading:
+    elif heading and not ctx.scope:
         lines.append(heading.split(" > ")[-1])
 
     if not rows:
@@ -360,6 +376,9 @@ def parse_pdf(path: str | Path, max_pages: int | None = None) -> ParsedDocument:
 
     # 跨页表格检测所需的上一页状态
     prev_tail: ParsedBlock | None = None
+    # 报表口径跨页继承；章节一变就失效，避免把「合并」带进财务附注
+    scope_title: str | None = None
+    scope_heading: str | None = None
 
     for i in range(limit):
         page = doc[i]
@@ -430,6 +449,10 @@ def parse_pdf(path: str | Path, max_pages: int | None = None) -> ParsedDocument:
                 seg = payload
                 for line in seg.splitlines():
                     tracker.feed(line)
+                    hit = STATEMENT_SCOPE.search(line)
+                    if hit:
+                        scope_title = hit.group(0)
+                        scope_heading = tracker.path()
                 if not pending_text:
                     pending_heading = tracker.path()
                 if not is_toc_line(seg) and len(seg) > 8:
@@ -442,6 +465,13 @@ def parse_pdf(path: str | Path, max_pages: int | None = None) -> ParsedDocument:
             heading = tracker.path()
 
             ctx, skip_rows = extract_context(page, t.bbox, page_text, doc_unit, rows)
+            # 章节一变就丢弃继承来的口径：财务附注里也会出现「合并资产负债表」
+            # 这几个字，继续沿用会把附注表错标成三大报表
+            if scope_title and scope_heading == heading:
+                ctx.scope = scope_title
+                heading = f"{heading} > {scope_title}"
+            else:
+                scope_title = scope_heading = None
             flags: list[str] = []
             if len(rows[0]) > 6:
                 flags.append("wide_table")

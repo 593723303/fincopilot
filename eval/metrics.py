@@ -53,7 +53,22 @@ REFUSAL_MARKERS = (
     "未收录",
     "未在已收录",
     "属于未来",
+    # 2026-10-04 补：模型会用「我目前没有…数据」「年报尚未发布」表达拒答，
+    # 旧词表收不到，导致一次正确拒答被记成误答，误答率虚高一倍
+    "我目前没有",
+    "尚未发布",
+    "暂无",
+    "没有相关",
+    # 伪前提问题（「第五季度」「白酒业务」）的正确回答是指出前提不成立，
+    # 这同样是拒答。首句说「不存在…」却被判成误答，会让拒答能力的改进
+    # 在指标上完全看不见
+    "不存在",
 )
+
+# 跌幅的符号常常由词承载而非负号：「同比减少1.21%」里数字是正的。
+# 只对百分比题做符号推断——金额题里出现「减少」的语境太多，
+# 放开会把无关数字凑成正确答案。
+DECREASE_WORDS = ("下降", "减少", "下滑", "降低", "负增长", "减少了", "下跌")
 
 
 @dataclass
@@ -145,6 +160,10 @@ def numeric_match(
     if not candidates:
         return False, False, "回答中未出现数值"
 
+    if expected_unit == "%" and target < 0 and any(w in answer for w in DECREASE_WORDS):
+        # 回答已用「减少」表明方向，正数与负的标准答案应判为一致
+        candidates = [(v, u) for v, u in candidates] + [(-abs(v), u) for v, u in candidates]
+
     declared_unit = any(u for _v, u in candidates)
     best: tuple[float, float, str | None] | None = None  # (相对误差, 原值, 量纲)
 
@@ -169,6 +188,14 @@ def numeric_match(
 
 SENTENCE_END = re.compile(r"[。！？\n]")
 
+# 枚举拒答说法已经漏了三轮（「我无法提供」→「我目前没有…数据」→「未披露」），
+# 每漏一次都让一次正确拒答被记成误答。改成「否定词 + 动词」的构词匹配：
+# 说法千变万化，骨架却都是「没有 / 未 / 无法 + 披露 / 提供 / 找到 / 收录」。
+REFUSAL_PATTERN = re.compile(
+    r"(未|没有|无法|不能|不予|查不到|找不到)\s*"
+    r"(披露|提供|找到|检索到|查到|给出|回答|收录|包含|提及|公布|列示|存在)"
+)
+
 
 def is_refusal(answer: str, refused_flag: bool) -> bool:
     """判断回答是否构成拒答。
@@ -185,6 +212,8 @@ def is_refusal(answer: str, refused_flag: bool) -> bool:
     if refused_flag:
         return True
     first = SENTENCE_END.split(answer.strip(), maxsplit=1)[0]
+    if REFUSAL_PATTERN.search(first):
+        return True
     return any(marker in first for marker in REFUSAL_MARKERS)
 
 

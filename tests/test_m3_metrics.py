@@ -195,3 +195,83 @@ def test_overlapping_intervals_mean_no_improvement():
 
 def test_bootstrap_empty():
     assert bootstrap_ci([]) == (0.0, 0.0, 0.0)
+
+
+# ── run 0020 暴露的两处评估器误判（真实回答原文） ──────────
+
+
+def test_decrease_word_carries_the_sign():
+    """「同比减少1.21%」与标准答案 -1.21% 应判为一致。
+
+    跌幅的符号常由词承载而非负号。此前这道题被判错，
+    但回答其实完全正确——评估器错了，指标就是假的。
+    """
+    answer = "贵州茅台2025年营业收入同比上年减少了 **1.21%**。"
+    ok, _unit, _d = numeric_match(answer, -1.21, "%")
+    assert ok is True
+
+
+def test_decrease_word_does_not_rescue_wrong_magnitude():
+    """方向词只补符号，不能把数值错了的回答救回来。"""
+    answer = "经营活动现金流量净额同比减少了11.43%。"
+    ok, _unit, _d = numeric_match(answer, -33.46, "%")
+    assert ok is False
+
+
+def test_sign_inference_limited_to_percent():
+    """金额题不做符号推断：含「减少」的语境太多，放开会凑出假阳性。"""
+    answer = "营业收入较上年减少，2025年为 2061049761.55 元。"
+    ok, _unit, _d = numeric_match(answer, -2061049761.55, "元")
+    assert ok is False
+
+
+def test_refusal_recognizes_not_yet_published():
+    """「我目前没有…数据，因为该年度的年报尚未发布」是拒答。"""
+    answer = "我目前没有比亚迪2025年的研发投入数据，因为该年度的年报尚未发布。"
+    assert is_refusal(answer, False) is True
+
+
+def test_zero_with_fabricated_source_is_not_a_refusal():
+    """给出「为 0 元」并附来源页码，是答案而非拒答，不能算正确拒答。"""
+    answer = "宁德时代不涉及白酒业务，因此白酒业务收入为 0 元。数据来源：[第1页]。"
+    assert is_refusal(answer, False) is False
+
+
+def test_refusal_recognizes_false_premise():
+    """指出前提不成立，是拒答而不是误答。"""
+    answer = "贵州茅台2025年不存在第五季度。一年只有四个季度。"
+    assert is_refusal(answer, False) is True
+
+
+def test_refusal_marker_only_matches_first_sentence():
+    """补词不得反转历史用例：末尾的免责声明不能把正确回答变成拒答。"""
+    answer = "贵州茅台的股票代码是600519。公司不存在其他上市股票，也无法提供实时行情。"
+    assert is_refusal(answer, False) is False
+
+
+@pytest.mark.parametrize(
+    "answer",
+    [
+        "贵州茅台2025年年报中未披露第五季度的营业收入数据。",
+        "所提供资料中未找到该数据。",
+        "已收录的年报中没有检索到相关内容。",
+        "资料中未提及宁德时代的白酒业务。",
+        "我无法提供该公司的实时股价。",
+    ],
+)
+def test_refusal_pattern_covers_negation_family(answer):
+    """枚举说法漏了三轮，改用「否定词 + 动词」的构词匹配兜住整个家族。"""
+    assert is_refusal(answer, False) is True
+
+
+@pytest.mark.parametrize(
+    "answer",
+    [
+        "贵州茅台2025年营业收入为168,838,102,514.79元。",
+        "贵州茅台的股票代码是600519。公司无法提供实时行情。",
+        "宁德时代财务报表中的金额以千元列示。",
+    ],
+)
+def test_refusal_pattern_does_not_misfire(answer):
+    """构词匹配只看首句，不能把正常回答连同末尾的免责声明一起判成拒答。"""
+    assert is_refusal(answer, False) is False

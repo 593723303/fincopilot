@@ -13,6 +13,7 @@ from pathlib import Path
 import pytest
 
 from app.rag.pdf_parser import (
+    STATEMENT_SCOPE,
     TableContext,
     inline_unit,
     is_numeric_table,
@@ -178,3 +179,37 @@ def test_unit_source_recorded_in_flags():
     assert tagged
     for t in tagged:
         assert any(f.startswith("unit_src:") for f in t.flags)
+
+
+# ── 报表口径（合并 / 母公司） ────────────────────────────
+
+
+@pytest.mark.parametrize(
+    "line",
+    ["合并现金流量表", "母公司资产负债表", "合并所有者权益变动表", "母公司利润表"],
+)
+def test_statement_scope_recognized(line):
+    assert STATEMENT_SCOPE.search(line) is not None
+
+
+@pytest.mark.parametrize("line", ["现金流量表补充资料", "分季度主要财务数据", "合并范围变更"])
+def test_statement_scope_ignores_other_titles(line):
+    assert STATEMENT_SCOPE.search(line) is None
+
+
+def test_scope_written_into_table_text():
+    """口径必须写进正文。
+
+    检索返回的是文本，模型看不到元数据——口径只存元数据里，
+    合并与母公司的数字就会被混用（实测两者经营现金流净额相差近一倍）。
+    """
+    ctx = TableContext(unit="元", scope="母公司现金流量表")
+    out = render_table([["项目", "2025年度"], ["经营活动现金流量净额", "1"]], ctx, "第八节 > 二、财务报表")
+    assert "母公司现金流量表" in out.splitlines()[1]
+
+
+def test_scope_replaces_heading_fallback():
+    """有口径时不再回落到章节名，避免同一位置出现两个标题。"""
+    ctx = TableContext(unit="元", scope="合并利润表")
+    out = render_table([["项目", "本期"]], ctx, "第八节财务报告 > 二、财务报表")
+    assert "二、财务报表" not in out

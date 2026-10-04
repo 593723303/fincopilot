@@ -58,9 +58,7 @@ CATEGORY_LABEL = {
 
 def git_sha() -> str | None:
     try:
-        out = subprocess.run(
-            ["git", "rev-parse", "HEAD"], capture_output=True, text=True, cwd=PROJECT_ROOT
-        )
+        out = subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True, cwd=PROJECT_ROOT)
         return out.stdout.strip() or None
     except Exception:
         return None
@@ -311,6 +309,12 @@ async def main() -> int:
     parser.add_argument("--exp", type=str, default=None, help="实验配置 ID")
     parser.add_argument("--limit", type=int, default=None, help="只跑前 N 题")
     parser.add_argument("--concurrency", type=int, default=3, help="并发数")
+    parser.add_argument(
+        "--category",
+        type=str,
+        default=None,
+        help="只跑指定类别（table/multihop/fact/refuse）。仅用于定向调试，结果不得与全量运行比较",
+    )
     parser.add_argument("--note", type=str, default=None)
     args = parser.parse_args()
 
@@ -347,6 +351,10 @@ async def main() -> int:
         if unverified:
             # 未复核的题目不参与评分：评估集本身错了，所有指标都是假的
             print(f"提示：{unverified} 题未复核，已排除")
+        if args.category:
+            items = [i for i in items if i.category == args.category]
+            # 子集运行改变了评估集构成，指标与全量不可比，必须在记录里留痕
+            print(f"仅评估 {args.category} 类（{len(items)} 题）——该结果不可与全量运行对比")
         if args.limit:
             items = items[: args.limit]
         if not items:
@@ -363,7 +371,7 @@ async def main() -> int:
                 exp_id=exp.exp_id,
                 config_snapshot=exp.model_dump(mode="json"),
                 git_sha=git_sha(),
-                note=args.note,
+                note=(f"[subset:{args.category}] " if args.category else "") + (args.note or ""),
                 item_count=len(items),
             )
             session.add(run)
@@ -413,6 +421,7 @@ async def main() -> int:
             db_run.status = "finished"
             db_run.finished_at = datetime.now()
             db_run.total_cost = Decimal(str(round(total_cost, 6)))
+
             def dump(ms: dict[str, MetricStat]) -> dict:
                 return {k: {"mean": m.mean, "lo": m.lo, "hi": m.hi, "n": m.n} for k, m in ms.items()}
 
