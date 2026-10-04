@@ -162,17 +162,42 @@ def judge(
 # ── 运行 ────────────────────────────────────────────────
 
 
+# 瞬时网络错误重试几次。这些「调用失败」不是被测系统的缺陷，
+# 却照样计入正确率——实测一次全量评估里会有 0–1 道题栽在
+# `OpenAIConnectionError: Connection error.` 上，正好是运行间波动的量级，
+# 不重试就分不清「模型答错了」和「网断了一下」。
+# 只重试连接/超时类，模型返回的业务错误一律不重试，避免把真失败刷掉。
+TRANSIENT_ERRORS = ("connection", "timeout", "timed out", "temporarily")
+MAX_RETRIES = 2
+
+
+def is_transient(exc: Exception) -> bool:
+    text = f"{type(exc).__name__} {exc}".lower()
+    return any(k in text for k in TRANSIENT_ERRORS)
+
+
 async def run_one(graph, item: EvalItem, exp: Experiment, tol: float) -> dict:
     started = time.perf_counter()
+    retried = 0
     try:
-        out = await graph.ainvoke(
-            new_state(question=item.question, conv_id=f"eval-{item.id}", exp_id=exp.exp_id)
-        )
+        for attempt in range(MAX_RETRIES + 1):
+            try:
+                out = await graph.ainvoke(
+                    new_state(
+                        question=item.question, conv_id=f"eval-{item.id}", exp_id=exp.exp_id
+                    )
+                )
+                break
+            except Exception as exc:
+                if attempt >= MAX_RETRIES or not is_transient(exc):
+                    raise
+                retried = attempt + 1
+                await asyncio.sleep(2**attempt)
     except Exception as exc:
         return {
             "item": item,
             "answer": None,
-            "error": f"{type(exc).__name__}: {exc}",
+            "error": f"{type(exc).__name__}: {exc}（已重试 {retried} 次）",
             "verdict": ItemVerdict(is_correct=False, detail="调用失败"),
             "pages": [],
             "latency_ms": int((time.perf_counter() - started) * 1000),
@@ -301,8 +326,13 @@ def render_report(
                 f"- 期望：{r['item'].ground_truth or '（应拒答）'}",
                 f"- 实际：{(r['answer'] or '')[:200]}",
                 f"- 判定：{r['verdict'].detail}",
-                "",
             ]
+            # 异常必须把原文带出来。不带的话，「调用失败」和「答错了」
+            # 在报告里长得一模一样，排查时只能靠重跑去碰——
+            # 实测两次崩溃都是这样被耽误的。
+            if r.get("error"):
+                lines.append(f"- 异常：`{r['error'][:300]}`")
+            lines.append("")
     return "\n".join(lines)
 
 
