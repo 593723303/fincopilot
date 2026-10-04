@@ -28,7 +28,12 @@ logger = logging.getLogger(__name__)
 CHINESE_ANALYZER = {"type": "chinese"}
 
 MAX_CONTENT_LEN = 8192
-MAX_HEADING_LEN = 512
+MAX_HEADING_LEN = 1024
+# 量纲字段。看着只放两三个字，但 VARCHAR 的长度**以字节计**：
+# 「百万元」是 9 字节，直接撑爆原来的 8——招商银行入库时就炸在这里
+# （length of varchar field unit exceeds max length, length: 9, max length: 8）。
+# 中文字段一律按字节留足余量，不要按字数估。
+MAX_UNIT_LEN = 32
 
 
 def collection_names() -> tuple[str, str]:
@@ -72,7 +77,7 @@ def _build_chunks_schema(client: MilvusClient, dim: int):
     # ── 随块返回的上下文字段 ──
     # unit 必须随块带出：中文年报量纲混用（元/万元/亿元），
     # 生成阶段要据此声明单位，否则数值题会读错量级（ADR-016）。
-    schema.add_field("unit", DataType.VARCHAR, max_length=8)
+    schema.add_field("unit", DataType.VARCHAR, max_length=MAX_UNIT_LEN)
     schema.add_field("heading_path", DataType.VARCHAR, max_length=MAX_HEADING_LEN)
     schema.add_field("page_start", DataType.INT32)
     schema.add_field("parent_uid", DataType.VARCHAR, max_length=128)

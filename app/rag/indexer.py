@@ -27,7 +27,12 @@ from app.config.experiment import Experiment, load_experiment
 from app.providers.registry import get_embeddings, get_registry
 from app.rag.chunker import ChunkUnit, chunk_document
 from app.rag.pdf_parser import parse_pdf
-from app.store.milvus_schema import MAX_CONTENT_LEN, collection_names
+from app.store.milvus_schema import (
+    MAX_CONTENT_LEN,
+    MAX_HEADING_LEN,
+    MAX_UNIT_LEN,
+    collection_names,
+)
 from app.store.models import Chunk, Document
 from app.store.pg import session_factory
 
@@ -273,8 +278,10 @@ async def ingest_pdf(
                 "chunk_type": u.chunk_type,
                 "statement_type": u.statement_type or "",
                 "strategy": u.strategy,
-                "unit": u.unit or "",
-                "heading_path": (u.heading_path or "")[:500],
+                # 中文字段一律按**字节**截断：VARCHAR 的长度限制以字节计，
+                # 按字数截断看着安全，撞上满是汉字的内容仍会超长
+                "unit": truncate_utf8(u.unit or "", MAX_UNIT_LEN)[0],
+                "heading_path": truncate_utf8(u.heading_path or "", MAX_HEADING_LEN)[0],
                 "page_start": u.page_start,
                 "parent_uid": u.parent_uid or "",
             }

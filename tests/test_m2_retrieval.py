@@ -9,7 +9,12 @@ import pytest
 
 from app.config.experiment import Experiment, ParentExpansionCfg, load_experiment
 from app.graph.build import branch_after_analyze, branch_after_grade
-from app.graph.nodes.query import QueryAnalysis, company_aliases, fallback_analysis
+from app.graph.nodes.query import (
+    QueryAnalysis,
+    company_aliases,
+    fallback_analysis,
+    unambiguous_aliases,
+)
 from app.rag.retrievers import QueryFilters, RetrievedChunk, build_expr, max_score
 
 CORPUS = [
@@ -257,3 +262,47 @@ def test_malformed_tool_call_does_not_misfire(text):
     from app.graph.nodes.agent import MALFORMED_CALL
 
     assert MALFORMED_CALL.search(text) is None
+
+
+# ── 公司别名：扩到 12 家后暴露的通名问题 ──────────────────
+
+
+CORPUS_12 = [
+    ("600519", "贵州茅台", 2025),
+    ("300750", "宁德时代", 2025),
+    ("600036", "招商银行", 2025),
+    ("601318", "中国平安", 2025),
+    ("601857", "中国石油", 2024),
+    ("600276", "恒瑞医药", 2025),
+    ("600900", "长江电力", 2025),
+    ("000651", "格力电器", 2025),
+]
+
+
+@pytest.mark.parametrize("word", ["银行", "医药", "电力", "电器", "中国"])
+def test_generic_industry_words_are_not_aliases(word):
+    """行业通名不能当公司标识。
+
+    它们有两处危害：规则兜底会把「宁德时代在银行的存款」判成问招商银行；
+    keyword_query_of 会把招行问题里的「银行」从 BM25 查询中剥掉。
+    """
+    assert word not in unambiguous_aliases(CORPUS_12)
+
+
+def test_aliases_still_cover_the_natural_short_names():
+    aliases = unambiguous_aliases(CORPUS_12)
+    for short, code in [
+        ("茅台", "600519"),
+        ("宁德", "300750"),
+        ("招商", "600036"),
+        ("平安", "601318"),
+        ("恒瑞", "600276"),
+        ("格力", "000651"),
+    ]:
+        assert aliases.get(short) == code
+
+
+def test_ambiguous_alias_is_dropped():
+    """同一别名指向两家公司时，用它认公司必然有一半是错的。"""
+    corpus = [("000001", "平安银行", 2025), ("601318", "中国平安", 2025)]
+    assert "平安" not in unambiguous_aliases(corpus)

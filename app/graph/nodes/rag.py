@@ -114,12 +114,12 @@ async def keyword_query_of(question: str, codes: list[str]) -> str:
     """
     if not codes:
         return question
-    from app.graph.nodes.query import available_corpus, company_aliases
+    from app.graph.nodes.query import available_corpus, unambiguous_aliases
 
-    names: set[str] = set()
-    for code, name, _year in await available_corpus():
-        if code in codes and name:
-            names |= company_aliases(name)
+    corpus = await available_corpus()
+    # 只剥唯一别名。通名型别名（银行 / 医药 / 电力）剥掉的是查询里
+    # 最有信息量的词——问招行的「银行业务收入」会被剥成「业务收入」
+    names = {alias for alias, owner in unambiguous_aliases(corpus).items() if owner in codes}
     out = question
     # 长别名优先，否则先删掉「茅台」会把「贵州茅台」剩下半截
     for alias in sorted(filter(None, names), key=len, reverse=True):

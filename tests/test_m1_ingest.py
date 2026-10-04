@@ -150,3 +150,28 @@ def test_chunking_cfg_defaults_enable_table_protection():
     assert cfg.table_atomic is True
     assert cfg.table_metadata is True
     assert cfg.cross_page_merge is True
+
+
+# ── Milvus VARCHAR 以字节计长（招商银行入库失败的根因） ──────
+
+
+def test_unit_field_fits_all_known_units():
+    """「百万元」是 9 字节，原来的 max_length=8 直接溢出。
+
+    报错是 `length of varchar field unit exceeds max length, length: 9, max length: 8`。
+    语料里只有元/千元/万元时这个字段从没被撑爆过，加入银行年报才暴露。
+    """
+    from app.store.milvus_schema import MAX_UNIT_LEN
+
+    for unit in ["元", "千元", "万元", "百万元", "亿元", "平方米", "股"]:
+        assert len(unit.encode("utf-8")) <= MAX_UNIT_LEN
+
+
+def test_truncate_utf8_is_byte_based_not_char_based():
+    """按字数截断看着安全，中文满长仍会超出字节上限。"""
+    text = "财" * 100  # 300 字节
+    out, cut = truncate_utf8(text, 64)
+    assert cut is True
+    assert len(out.encode("utf-8")) <= 64
+    # 按字数截断会得到 64 个字 = 192 字节，照样炸
+    assert len(text[:64].encode("utf-8")) > 64

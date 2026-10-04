@@ -101,18 +101,54 @@ async def available_corpus() -> list[tuple[str, str, int]]:
     return [(r[0], r[1], r[2]) for r in rows]
 
 
+# 截出来的两字别名里，这些是行业通名而非公司标识。
+# 语料只有茅台和宁德时代时无所谓；扩到 12 家后，「招商银行」会产出别名
+# 「银行」、「恒瑞医药」产出「医药」、「长江电力」产出「电力」、
+# 「中国平安」产出「中国」——而别名有两处用途，两处都会被它们毁掉：
+#   1. 规则兜底按别名认公司：问「宁德时代在银行的存款」会被判成问招商银行
+#   2. keyword_query_of 把别名从 BM25 查询里剥掉：问招行的「银行业务收入」
+#      会被剥成「业务收入」，把最有信息量的词删了
+GENERIC_NAME_PARTS = frozenset(
+    {
+        "中国", "中华", "国际", "发展", "实业", "集团", "股份", "控股",
+        "银行", "证券", "保险", "电力", "能源", "石油", "医药", "制药",
+        "生物", "电器", "科技", "电子", "通信", "传媒", "化工", "汽车",
+        "食品", "地产", "环保", "水泥", "物流", "建设", "工业",
+    }
+)
+
+
 def company_aliases(name: str) -> set[str]:
     """公司简称。
 
     用户几乎不会写全称：说「茅台」而非「贵州茅台」，说「宁德」而非
     「宁德时代新能源科技股份有限公司」。整名匹配会全数落空。
+
+    截短会撞上行业通名，因此过滤 GENERIC_NAME_PARTS；
+    是否与同语料的其它公司冲突，由 unambiguous_aliases 再把一道关。
     """
     base = re.sub(r"(股份有限公司|有限公司|集团|控股|科技|新能源|股份)", "", name).strip()
     out = {name, base}
     if len(base) >= 4:
         out.add(base[-2:])  # 贵州茅台 → 茅台
         out.add(base[:2])  # 宁德时代 → 宁德
-    return {a for a in out if len(a) >= 2}
+    return {a for a in out if len(a) >= 2 and a not in GENERIC_NAME_PARTS}
+
+
+def unambiguous_aliases(corpus: list[tuple[str, str, int]]) -> dict[str, str]:
+    """别名 → 公司代码，只保留在**当前语料内唯一**的别名。
+
+    通名过滤是静态的，这一层是动态的：同一个别名指向两家公司时，
+    用它去认公司必然有一半是错的，不如不认。
+    语料越大越容易撞名，这道关只会越来越重要。
+    """
+    owners: dict[str, set[str]] = {}
+    for code, name, _year in corpus:
+        if not name:
+            continue
+        for alias in company_aliases(name):
+            owners.setdefault(alias, set()).add(code)
+    return {alias: next(iter(codes)) for alias, codes in owners.items() if len(codes) == 1}
 
 
 def fallback_analysis(question: str, corpus: list[tuple[str, str, int]]) -> QueryAnalysis:
@@ -121,8 +157,9 @@ def fallback_analysis(question: str, corpus: list[tuple[str, str, int]]) -> Quer
     按公司名与年份做字面匹配，命中则走 rag，否则交给 agent。
     """
     codes = {c for c in CODE_PAT.findall(question)}
-    for code, name, _year in corpus:
-        if name and any(alias in question for alias in company_aliases(name)):
+    # 用唯一别名而非全部别名：撞名的别名认出来的公司有一半是错的
+    for alias, code in unambiguous_aliases(corpus).items():
+        if alias in question:
             codes.add(code)
     years = {int(y) for y in YEAR_PAT.findall(question)}
     known_years = {y for _c, _n, y in corpus}
