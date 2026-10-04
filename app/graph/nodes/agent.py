@@ -170,6 +170,20 @@ async def agent_node(state: GraphState, config: RunnableConfig) -> GraphState:
             continue
 
         if not tool_calls or forced:
+            # 护栏触顶后模型可能仍然只发工具调用、不给正文，这时 text 是空串，
+            # 用户拿到的就是一片空白。强制收敛的承诺是「给个交代」，
+            # 不是「给个空字符串」——兜一句，并说明已经查了什么。
+            if not text.strip():
+                looked_up = "；".join(
+                    f"{s['tool']}({str(s['args'])[:40]})" for s in scratchpad[-3:]
+                )
+                text = (
+                    "本次分析未能得出结论：已达到步数或成本上限，且模型未给出最终回答。"
+                    + (f"已查询：{looked_up}。" if looked_up else "")
+                    + "可以把问题拆小一些再问，例如先单独查其中一项数据。"
+                )
+                degraded.append("agent_empty_answer")
+                logger.warning("Agent 强制收敛后仍无正文，已用兜底文案")
             logger.info("Agent 完成：%d 步，成本 ¥%.5f", steps, usage.cost_cny)
             return {
                 "answer": text,
