@@ -398,6 +398,12 @@ def year_breakdown(header: list[str], body: list[list[str]]) -> list[str]:
     }
     if len(cols) < 2:
         return []
+    # 同一年份出现在多列时整段放弃。资产负债表的列头是
+    # 「2025年末 | 2025年初」，两列都归到 2025 年，展开出来会是
+    # 「2025年=43,904,550；2025年=10,000,000」——读的人无从判断哪个是哪个。
+    # 歧义的输出比没有更糟。
+    if len(set(cols.values())) != len(cols):
+        return []
 
     out: list[str] = []
     for row in body[:BREAKDOWN_MAX_ROWS]:

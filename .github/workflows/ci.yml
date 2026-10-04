@@ -22,13 +22,21 @@ jobs:
           pip install -e ".[dev]"
 
       - name: Lint
-        run: ruff check app tests scripts
+        # eval 与 frontend 也要查。此前只列了 app/tests/scripts，
+        # 本地一直在查这两个目录，CI 却不查——等于少了一道闸
+        run: ruff check app tests scripts eval frontend
 
-      - name: 测试（M0 不依赖外部服务）
+      - name: 测试（不依赖外部服务）
         run: pytest -q
 
-  # M3 起启用：评估回归。主指标较主干下降超阈值则 CI 失败（架构 §12.4）
-  # eval-regression:
-  #   runs-on: ubuntu-latest
-  #   steps:
-  #     - run: python -m eval.run --exp current --dataset smoke
+# 评估回归为什么不在 CI 里
+# ----------------------------------------------------
+# 跑一次 v2 全量需要 PostgreSQL + Milvus + Redis 三个存储、一份已入库的
+# 12 家公司语料（约 8900 条向量），以及百炼的 API Key，单次约 ¥0.37。
+# 语料不入库，评估跑的就是空集——这不是「配几个 service 容器」能解决的，
+# 真正的成本在于把 12 份年报重新解析入库。
+#
+# 当前做法是本地手动跑，结果逐行记进 docs/benchmarks.md。
+# 要接进 CI 的前提是先有一份可复用的索引快照（Milvus 的备份/恢复），
+# 让 CI 直接挂载而不是现场重建——在那之前接进来只会得到一个
+# 永远失败或永远跳过的 job，不如不接（见 open-issues P2-4）。

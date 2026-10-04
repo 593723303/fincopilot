@@ -295,3 +295,16 @@ def test_no_breakdown_when_row_has_too_few_numbers():
         ["是否适用", "是", "", ""],
     ]
     assert "【按年份】" not in render_table(rows, TableContext(), "x")
+
+
+def test_no_breakdown_when_a_year_spans_two_columns():
+    """资产负债表的「2025年末 / 2025年初」两列都归到 2025，展开出来有歧义。
+
+    「2025年=43,904,550；2025年=10,000,000」读的人无从判断哪个是哪个——
+    歧义的输出比没有更糟。
+    """
+    rows = [
+        ["项目", "2025年12月31日", "2025年1月1日", "2024年12月31日"],
+        ["短期借款", "43,904,550", "10,000,000", "31,008,549"],
+    ]
+    assert "【按年份】" not in render_table(rows, TableContext(unit="千元"), "x")
