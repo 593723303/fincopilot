@@ -56,7 +56,9 @@ async def chat(req: ChatRequest) -> ChatResponse:
     started = time.perf_counter()
 
     try:
-        result = await get_graph().ainvoke(new_state(question=req.question, conv_id=conv_id))
+        result = await get_graph().ainvoke(
+            new_state(question=req.question, conv_id=conv_id, exp_id=req.exp_id)
+        )
     except Exception as exc:
         logger.exception("问答失败")
         raise HTTPException(
@@ -77,17 +79,20 @@ async def chat(req: ChatRequest) -> ChatResponse:
     )
 
 
-async def _event_stream(question: str, conv_id: str) -> AsyncIterator[dict]:
+async def _event_stream(
+    question: str, conv_id: str, exp_id: str | None = None
+) -> AsyncIterator[dict]:
     started = time.perf_counter()
     graph = get_graph()
     final: dict = {}
     first_token_ms: int | None = None
 
-    yield _sse("meta", {"conv_id": conv_id, "exp_id": load_experiment().exp_id})
+    exp = load_experiment(exp_id)
+    yield _sse("meta", {"conv_id": conv_id, "exp_id": exp.exp_id})
 
     try:
         async for ev in graph.astream_events(
-            new_state(question=question, conv_id=conv_id), version="v2"
+            new_state(question=question, conv_id=conv_id, exp_id=exp_id), version="v2"
         ):
             kind = ev.get("event")
             name = ev.get("name", "")
@@ -156,4 +161,4 @@ async def chat_stream(req: ChatRequest):
     """流式问答。事件协议见架构 §8.2。"""
     _validate_exp(req.exp_id)
     conv_id = req.conv_id or uuid.uuid4().hex
-    return EventSourceResponse(_event_stream(req.question, conv_id))
+    return EventSourceResponse(_event_stream(req.question, conv_id, req.exp_id))

@@ -22,12 +22,25 @@ providers:
     api_key_env: VLLM_API_KEY
 
 profiles:
-  # 强模型：最终答案生成
+  # 强模型：最终答案生成。正式评估固定用它——
+  # 换模型会让历史指标全部不可比，消融对比必须重跑。
   strong:
     provider: bailian
     model: qwen-plus
     price_in: 0.0008
     price_out: 0.0020
+    timeout: 60
+    temperature: 0.1
+
+  # 低价模型：日常调试与冒烟用，不用于正式评估。
+  # 本项目输入远大于输出（约 4000 入 / 100 出），而 qwen-flash 的
+  # 输入单价仅为 qwen-plus 的 1/5，实测单题成本相差约 4.5 倍。
+  # 注意阶梯计价：输入超过 128k token 后单价跳涨，本项目远低于该档。
+  cheap:
+    provider: bailian
+    model: qwen-flash
+    price_in: 0.00015
+    price_out: 0.0015
     timeout: 60
     temperature: 0.1
 

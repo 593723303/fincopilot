@@ -63,7 +63,9 @@ class ItemVerdict:
     is_correct: bool | None = None
     numeric_ok: bool | None = None
     unit_ok: bool | None = None
+    # 文档级：粗粒度下限指标；页码级：真正衡量检索质量的指标
     recall_at_k: float | None = None
+    page_recall: float | None = None
     detail: str = ""
 
 
@@ -213,11 +215,16 @@ def unit_declared(answer: str, expected_unit: str | None) -> bool:
 # ── 检索指标 ────────────────────────────────────────────
 
 
-def recall_at_k(retrieved_uids: list[str], expected_doc_keys: list[str] | None) -> float | None:
-    """应命中的文档是否出现在检索结果中。
+# 跨页表格合并后块的起始页可能前移一页，留一页容差
+PAGE_TOLERANCE = 1
 
-    以 doc_key 为粒度而非具体块：同一份年报里哪个块命中都算对，
-    块粒度的标注成本高且不稳定（重新分块后块 ID 全变）。
+
+def doc_recall(retrieved_uids: list[str], expected_doc_keys: list[str] | None) -> float | None:
+    """文档级召回。
+
+    粒度很粗——同一份年报里哪个块命中都算对——因此只能作为
+    「文档级过滤是否正确」的下限指标，不能用来判断检索质量。
+    真正有判别力的是 page_recall。
     """
     if not expected_doc_keys:
         return None
@@ -225,6 +232,32 @@ def recall_at_k(retrieved_uids: list[str], expected_doc_keys: list[str] | None) 
         return 0.0
     hit = sum(1 for key in expected_doc_keys if any(key in uid for uid in retrieved_uids))
     return hit / len(expected_doc_keys)
+
+
+def page_recall(
+    retrieved_pages: list[int], expected_pages: list[int] | None, tolerance: int = PAGE_TOLERANCE
+) -> float | None:
+    """页码级召回 —— 衡量检索质量的主指标。
+
+    文档级召回无法区分「检索到 p6 摘要表」与「检索到 p150 无关附注」，
+    而后者正是当前的主要失败模式：检索系统性偏向财务报表附注，
+    文档级召回却显示 93.9%，完全掩盖了问题。
+
+    块粒度（chunk_uid）的标注成本高且不稳定——重新分块后 ID 全变，
+    页码则跨分块策略稳定，适合做消融实验的横向对比。
+    """
+    if not expected_pages:
+        return None
+    if not retrieved_pages:
+        return 0.0
+    hit = sum(
+        1 for p in expected_pages if any(abs(p - r) <= tolerance for r in retrieved_pages)
+    )
+    return hit / len(expected_pages)
+
+
+# 兼容旧调用名
+recall_at_k = doc_recall
 
 
 # ── 统计 ────────────────────────────────────────────────

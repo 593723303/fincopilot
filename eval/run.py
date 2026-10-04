@@ -36,10 +36,11 @@ from eval.metrics import (
     ItemVerdict,
     MetricStat,
     RunSummary,
+    doc_recall,
     fact_match,
     is_refusal,
     numeric_match,
-    recall_at_k,
+    page_recall,
     stat,
     unit_declared,
 )
@@ -111,10 +112,18 @@ async def load_dataset(path: Path, name: str) -> int:
 # ── 单题判定 ────────────────────────────────────────────
 
 
-def judge(item: EvalItem, answer: str, refused: bool, uids: list[str], tol: float) -> ItemVerdict:
+def judge(
+    item: EvalItem,
+    answer: str,
+    refused: bool,
+    uids: list[str],
+    pages: list[int],
+    tol: float,
+) -> ItemVerdict:
     """按类别判定单题。全部为确定性规则，不调用模型。"""
     v = ItemVerdict()
-    v.recall_at_k = recall_at_k(uids, item.expected_doc_keys)
+    v.recall_at_k = doc_recall(uids, item.expected_doc_keys)
+    v.page_recall = page_recall(pages, item.expected_pages)
     refusal = is_refusal(answer, refused)
 
     if item.category == "refuse":
@@ -154,13 +163,16 @@ def judge(item: EvalItem, answer: str, refused: bool, uids: list[str], tol: floa
 async def run_one(graph, item: EvalItem, exp: Experiment, tol: float) -> dict:
     started = time.perf_counter()
     try:
-        out = await graph.ainvoke(new_state(question=item.question, conv_id=f"eval-{item.id}"))
+        out = await graph.ainvoke(
+            new_state(question=item.question, conv_id=f"eval-{item.id}", exp_id=exp.exp_id)
+        )
     except Exception as exc:
         return {
             "item": item,
             "answer": None,
             "error": f"{type(exc).__name__}: {exc}",
             "verdict": ItemVerdict(is_correct=False, detail="调用失败"),
+            "pages": [],
             "latency_ms": int((time.perf_counter() - started) * 1000),
             "cost": 0.0,
             "uids": [],
@@ -168,8 +180,14 @@ async def run_one(graph, item: EvalItem, exp: Experiment, tol: float) -> dict:
         }
 
     answer = out.get("answer") or ""
-    uids = [c.get("chunk_uid", "") for c in (out.get("retrieved") or [])]
-    verdict = judge(item, answer, bool(out.get("refused")), uids, tol)
+    retrieved = out.get("retrieved") or []
+    uids = [c.get("chunk_uid", "") for c in retrieved]
+    # 页码取块覆盖的整个范围：跨页表格合并后一个块可能横跨两页
+    pages: list[int] = []
+    for c in retrieved:
+        start, end = int(c.get("page_start") or 0), int(c.get("page_end") or 0)
+        pages.extend(range(start, max(start, end) + 1) if start else [])
+    verdict = judge(item, answer, bool(out.get("refused")), uids, pages, tol)
     return {
         "item": item,
         "answer": answer,
@@ -178,6 +196,7 @@ async def run_one(graph, item: EvalItem, exp: Experiment, tol: float) -> dict:
         "latency_ms": int((time.perf_counter() - started) * 1000),
         "cost": float((out.get("usage") or {}).get("cost_cny", 0.0)),
         "uids": uids,
+        "pages": sorted(set(pages)),
         "refused": bool(out.get("refused")),
     }
 
@@ -193,9 +212,12 @@ def summarize(results: list[dict], rounds: int) -> RunSummary:
         units = [1.0 if r["verdict"].unit_ok else 0.0 for r in rs if r["verdict"].unit_ok is not None]
         if units:
             out["量纲声明率"] = stat("量纲声明率", units, rounds)
+        pr = [r["verdict"].page_recall for r in rs if r["verdict"].page_recall is not None]
+        if pr:
+            out["页码召回"] = stat("页码召回", pr, rounds)
         recalls = [r["verdict"].recall_at_k for r in rs if r["verdict"].recall_at_k is not None]
         if recalls:
-            out["Recall@K"] = stat("Recall@K", recalls, rounds)
+            out["文档召回"] = stat("文档召回", recalls, rounds)
         return out
 
     summary.overall = collect(results)
@@ -381,6 +403,7 @@ async def main() -> int:
                         numeric_ok=v.numeric_ok,
                         unit_ok=v.unit_ok,
                         recall_at_k=v.recall_at_k,
+                        page_recall=v.page_recall,
                         latency_ms=r["latency_ms"],
                         cost=Decimal(str(round(r["cost"], 6))),
                         error=r["error"],

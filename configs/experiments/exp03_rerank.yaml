@@ -1,0 +1,80 @@
+# 实验 exp03 —— 在 exp02 基础上加入重排
+#
+# 相对 exp02_heading 的唯一变更：rerank.enabled false → true
+# 单因子变更，这一行的差异可以归因到重排本身。
+#
+# 动机来自 exp02 的诊断：文档召回 93.9% 而页码召回仅 38.8%，
+# 检索几乎总能找到正确的年报，却找不到正确的页——
+# 系统性偏向财务报表附注（科目名出现频率高）而非摘要表。
+# 这是排序问题，重排是针对性最强的改进。
+#
+# 注意 relevance_threshold 同步调整：重排分数是 0-1 的相关性，
+# 与 RRF 分值（0.01-0.03 量级）完全不可比，沿用旧阈值会导致全部拒答。
+
+exp_id: exp03_rerank
+description: "exp02 + 重排。单因子变更，用于归因重排的边际贡献"
+
+chunking:
+  strategy: heading
+  chunk_size: 512
+  overlap: 64
+  parent_child: true
+  table_atomic: true
+  table_metadata: true
+  cross_page_merge: true
+
+retrieval:
+  mode: hybrid
+  top_k_dense: 20
+  top_k_sparse: 20
+  fusion: rrf
+  filters_pushdown: true
+
+rerank:
+  enabled: true
+  model: gte-rerank-v2
+  top_n: 5
+
+query_transform:
+  coref_resolution: true
+  hyde: false
+  decompose: false
+
+parent_expansion:
+  enabled: true
+  dedup_by_parent: true
+  token_budget: 6000
+  keep_table_intact: true
+
+generation:
+  profile: strong
+  require_citation: true
+  require_unit_declaration: true
+  # 重排输出 0-1 的相关性分数，量级与 RRF（约 0.016-0.033）差一个数量级。
+  # 阈值必须随判分方式重新校准，否则比较的是阈值而非检索质量。
+  relevance_threshold: 0.05
+  max_retry_on_low_relevance: 1
+
+cache:
+  exact: true
+  semantic: false
+  similarity_threshold: 0.97
+  entity_constraint: strict
+  audit_sample_rate: 0.05
+
+router:
+  profile: light
+  confidence_threshold: 0.7
+  fallback_branch: agent
+
+agent:
+  max_steps: 8
+  max_tool_errors: 3
+  budget_cny: 0.15
+
+eval:
+  dataset: v1
+  bootstrap_rounds: 1000
+  judge_profile: judge
+  numeric_tolerance: 0.005
+  stratified_report: true

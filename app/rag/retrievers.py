@@ -69,6 +69,7 @@ class RetrievedChunk:
     chunk_type: str = "text"
     heading_path: str = ""
     page_start: int = 0
+    page_end: int = 0
     parent_uid: str | None = None
     doc_key: str = ""
     expanded: bool = False  # 是否已被替换为父块
@@ -86,6 +87,7 @@ class RetrievedChunk:
             chunk_type=e.get("chunk_type", "text"),
             heading_path=e.get("heading_path", ""),
             page_start=int(e.get("page_start", 0) or 0),
+            page_end=int(e.get("page_start", 0) or 0),
             parent_uid=e.get("parent_uid") or None,
             doc_key=e.get("doc_key", ""),
         )
@@ -208,15 +210,41 @@ async def retrieve(
     return chunks
 
 
-async def rerank(chunks: list[RetrievedChunk], query: str, exp: Experiment) -> list[RetrievedChunk]:
-    """重排。
+async def rerank(
+    chunks: list[RetrievedChunk], query: str, exp: Experiment
+) -> tuple[list[RetrievedChunk], list[str]]:
+    """重排，返回 (结果, 降级标记)。
 
-    M2 基线不启用（exp01 中 rerank.enabled=false），M4 消融时接入。
-    服务不可用时跳过而非报错，按降级矩阵标记 degraded（架构 §10.1）。
+    关闭时按原序截断到 top_n——这样开关重排只改变排序方式，
+    不改变送入生成的块数，消融实验才是在比较排序质量本身。
+
+    服务不可用时保留原序继续，并标记 degraded：重排是质量增强
+    而非必需环节，为它牺牲可用性不划算（架构 §10.1）。
     """
-    if not exp.rerank.enabled:
-        return chunks[: exp.rerank.top_n] if exp.rerank.top_n else chunks
-    raise NotImplementedError("重排将在 M4 引入，当前实验配置应保持 rerank.enabled=false")
+    top_n = exp.rerank.top_n or len(chunks)
+    if not exp.rerank.enabled or not chunks:
+        return chunks[:top_n], []
+
+    from app.providers.reranker import RerankUnavailable, rerank_documents
+
+    try:
+        ranked = await rerank_documents(
+            query, [c.content for c in chunks], top_n=top_n, model=exp.rerank.model
+        )
+    except RerankUnavailable as exc:
+        logger.warning("重排不可用，保留原序：%s", exc)
+        return chunks[:top_n], ["rerank_skipped"]
+
+    out: list[RetrievedChunk] = []
+    for idx, score in ranked:
+        if 0 <= idx < len(chunks):
+            c = chunks[idx]
+            # 用重排分数覆盖检索分数：后续相关度判定应基于重排结果，
+            # 否则阈值比较的仍是 RRF 分值，与实际排序脱节
+            c.score = score
+            out.append(c)
+    logger.debug("重排 %d → %d 条，最高分 %.4f", len(chunks), len(out), out[0].score if out else 0)
+    return out, []
 
 
 async def expand_parents(
@@ -267,6 +295,7 @@ async def expand_parents(
                 chunk_type=parent.chunk_type,
                 heading_path=parent.heading_path or c.heading_path,
                 page_start=parent.page_start or c.page_start,
+                page_end=parent.page_end or parent.page_start or c.page_end,
                 parent_uid=None,
                 doc_key=c.doc_key,
                 expanded=True,

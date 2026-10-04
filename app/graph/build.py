@@ -17,7 +17,6 @@ import logging
 
 from langgraph.graph import END, START, StateGraph
 
-from app.config.experiment import load_experiment
 from app.graph.nodes.query import analyze_query
 from app.graph.nodes.rag import (
     chat_node,
@@ -26,7 +25,7 @@ from app.graph.nodes.rag import (
     retrieve_node,
     verify_node,
 )
-from app.graph.state import GraphState
+from app.graph.state import GraphState, experiment_of
 
 logger = logging.getLogger(__name__)
 
@@ -66,7 +65,7 @@ def branch_after_analyze(state: GraphState) -> str:
 def branch_after_grade(state: GraphState) -> str:
     if state.get("refused"):
         return "end"
-    exp = load_experiment()
+    exp = experiment_of(state)
     relevance = state.get("relevance", 0.0)
     if relevance < exp.generation.relevance_threshold:
         # grade 已把 retry_count 加过，这里只负责选边

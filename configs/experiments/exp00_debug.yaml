@@ -1,0 +1,82 @@
+# 实验 exp00 —— 当前最优配置（exp04 检索参数 + qwen-flash 生成）
+#
+# 实测（run 0014 对 run 0012）：正确率 85.2% 对 86.9%，区间大幅重叠、
+# 无显著差异，误答率反而更低（8.3% 对 16.7%），而单题成本从
+# ¥0.0062 降到 ¥0.0013 —— 仅为 qwen-plus 的 1/4.8。
+# 原因是本场景输入远大于输出（约 4000 入 / 100 出），
+# 而 qwen-flash 的输入单价只有 qwen-plus 的五分之一。
+#
+#     python -m eval.run --dataset v1 --exp exp00_debug
+#     EXP_ID=exp00_debug uvicorn app.main:app
+#
+# 与 exp04_wider 对比时注意：两者只差生成模型，其余完全一致，
+# 因此这一行的差异可以归因到模型本身。
+# 跨模型的指标不可与其他实验混为一谈——消融对比须固定生成模型。
+#
+# 块的 strategy 仍是 heading，与 exp02/exp04 共用同一批向量，无需重新入库。
+
+exp_id: exp00_debug
+description: "当前最优：exp04 检索参数 + qwen-flash 生成，质量持平而成本仅五分之一"
+
+chunking:
+  strategy: heading
+  chunk_size: 512
+  overlap: 64
+  parent_child: true
+  table_atomic: true
+  table_metadata: true
+  cross_page_merge: true
+
+retrieval:
+  mode: hybrid
+  top_k_dense: 20
+  top_k_sparse: 20
+  fusion: rrf
+  filters_pushdown: true
+
+rerank:
+  enabled: false
+  model: gte-rerank-v2
+  top_n: 15
+
+query_transform:
+  coref_resolution: true
+  hyde: false
+  decompose: false
+
+parent_expansion:
+  enabled: true
+  dedup_by_parent: true
+  token_budget: 14000
+  keep_table_intact: true
+
+generation:
+  profile: cheap        # 与 exp04_wider 的唯一差异
+  require_citation: true
+  require_unit_declaration: true
+  relevance_threshold: 0.010
+  max_retry_on_low_relevance: 1
+
+cache:
+  exact: true
+  semantic: false
+  similarity_threshold: 0.97
+  entity_constraint: strict
+  audit_sample_rate: 0.05
+
+router:
+  profile: light
+  confidence_threshold: 0.7
+  fallback_branch: agent
+
+agent:
+  max_steps: 8
+  max_tool_errors: 3
+  budget_cny: 0.15
+
+eval:
+  dataset: v1
+  bootstrap_rounds: 1000
+  judge_profile: judge
+  numeric_tolerance: 0.005
+  stratified_report: true

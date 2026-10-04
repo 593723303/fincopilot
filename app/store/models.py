@@ -251,7 +251,10 @@ class EvalResult(Base):
     unit_ok: Mapped[bool | None] = mapped_column(Boolean, nullable=True, comment="是否声明了正确单位")
 
     # ── 辅助指标：用于归因，不作验收 ──
+    # 文档级召回：粒度粗，只能作为「文档过滤是否正确」的下限指标
     recall_at_k: Mapped[float | None] = mapped_column(Numeric(5, 4), nullable=True)
+    # 页码级召回：真正衡量检索质量。文档级无法区分命中摘要表与命中无关附注
+    page_recall: Mapped[float | None] = mapped_column(Numeric(5, 4), nullable=True)
     faithfulness: Mapped[float | None] = mapped_column(Numeric(5, 4), nullable=True)
     answer_relevancy: Mapped[float | None] = mapped_column(Numeric(5, 4), nullable=True)
 

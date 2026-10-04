@@ -1,0 +1,97 @@
+# 实验 exp04 —— 放宽截断深度，关闭重排
+#
+# 相对 exp02_heading 的变更：
+#   rerank.top_n                  5 → 15
+#   parent_expansion.token_budget 6000 → 14000
+#   rerank.enabled 保持 false（见下）
+#
+# 依据来自分阶段召回测量（49 道有页码标注的题）：
+#
+#   检索 top20   95.9%
+#   截断 top5    44.9%   ← 一步损失 51 个百分点
+#   父块还原     44.9%   ← 无额外损失
+#
+# 真正的瓶颈既不是召回也不是排序，而是**截断深度**。
+# 不同 top_n 下的页码召回：
+#
+#   top_n     5      8     10     15     20
+#   不重排  44.9%  72.4%  84.7%  92.9%  95.9%
+#   重排    42.9%  69.4%  75.5%  89.8%  95.9%
+#
+# 重排（gte-rerank-v2）在所有深度下都没有帮助，top_n=10 时反而
+# 低 9 个百分点。它是通用语义模型，对中文财报表格的结构化内容
+# 判断不如 RRF 融合——其分数分布也印证了这点（实测仅 0.11–0.16，
+# 区分度极低）。因此关闭重排，省下成本与延迟。
+#
+# top_n 取 15 而非 20：召回 92.9% 对 95.9% 差 3 个点，
+# 但上下文少四分之一。留出余量给 token 预算，避免父块还原阶段再次截断。
+
+exp_id: exp04_wider
+description: "放宽截断至 top_n=15 并同步扩大上下文预算，关闭重排"
+
+chunking:
+  strategy: heading
+  chunk_size: 512
+  overlap: 64
+  parent_child: true
+  table_atomic: true
+  table_metadata: true
+  cross_page_merge: true
+
+retrieval:
+  mode: hybrid
+  # top_k 不能超过 HNSW 的 ef（64），超出会报
+  # "ef(64) should be larger than k(100)"
+  top_k_dense: 20
+  top_k_sparse: 20
+  fusion: rrf
+  filters_pushdown: true
+
+rerank:
+  enabled: false
+  model: gte-rerank-v2
+  top_n: 15
+
+query_transform:
+  coref_resolution: true
+  hyde: false
+  decompose: false
+
+parent_expansion:
+  enabled: true
+  dedup_by_parent: true
+  # 必须随 top_n 同步放大：15 个父块约需 15000 字符，
+  # 沿用 6000 会在还原阶段把刚放宽的召回重新裁掉
+  token_budget: 14000
+  keep_table_intact: true
+
+generation:
+  profile: strong
+  require_citation: true
+  require_unit_declaration: true
+  relevance_threshold: 0.010
+  max_retry_on_low_relevance: 1
+
+cache:
+  exact: true
+  semantic: false
+  similarity_threshold: 0.97
+  entity_constraint: strict
+  audit_sample_rate: 0.05
+
+router:
+  profile: light
+  confidence_threshold: 0.7
+  fallback_branch: agent
+
+agent:
+  max_steps: 8
+  max_tool_errors: 3
+  budget_cny: 0.15
+
+eval:
+  dataset: v1
+  bootstrap_rounds: 1000
+  judge_profile: judge
+  numeric_tolerance: 0.005
+  stratified_report: true

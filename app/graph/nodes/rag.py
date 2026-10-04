@@ -13,8 +13,7 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langchain_core.runnables import RunnableConfig
 from langchain_core.runnables.config import merge_configs
 
-from app.config.experiment import load_experiment
-from app.graph.state import GraphState
+from app.graph.state import GraphState, experiment_of
 from app.observability.cost import TokenUsage, merge_usage, usage_from_response
 from app.observability.tracing import callbacks, trace_metadata
 from app.providers.registry import get_chat
@@ -84,7 +83,7 @@ async def retrieve_node(state: GraphState) -> GraphState:
     if state.get("refused"):
         return {}
 
-    exp = load_experiment()
+    exp = experiment_of(state)
     raw = state.get("filters") or {}
     retry = state.get("retry_count", 0)
 
@@ -123,7 +122,8 @@ async def retrieve_node(state: GraphState) -> GraphState:
             "degraded": degraded,
         }
 
-    chunks = await rerank(chunks, query, exp)
+    chunks, rerank_degraded = await rerank(chunks, query, exp)
+    degraded.extend(rerank_degraded)
     chunks, expand_degraded = await expand_parents(chunks, exp)
     degraded.extend(expand_degraded)
 
@@ -143,7 +143,7 @@ async def grade_node(state: GraphState) -> GraphState:
     if state.get("refused"):
         return {}
 
-    exp = load_experiment()
+    exp = experiment_of(state)
     threshold = exp.generation.relevance_threshold
     relevance = state.get("relevance", 0.0)
     retry = state.get("retry_count", 0)
@@ -166,7 +166,7 @@ async def generate_node(state: GraphState, config: RunnableConfig) -> GraphState
     if state.get("refused"):
         return {}
 
-    exp = load_experiment()
+    exp = experiment_of(state)
     profile = exp.generation.profile
     chunks = [RetrievedChunk(**d) for d in (state.get("retrieved") or [])]
     question = state.get("rewritten") or state["question"]
@@ -260,7 +260,7 @@ async def chat_node(state: GraphState, config: RunnableConfig) -> GraphState:
     if state.get("refused"):
         return {}
 
-    exp = load_experiment()
+    exp = experiment_of(state)
     profile = exp.router.profile
     llm = get_chat(profile)
     response = await llm.ainvoke(

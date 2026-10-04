@@ -20,8 +20,7 @@ from langchain_core.runnables.config import merge_configs
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 
-from app.config.experiment import load_experiment
-from app.graph.state import GraphState
+from app.graph.state import GraphState, experiment_of
 from app.observability.cost import TokenUsage, merge_usage, usage_from_response
 from app.observability.tracing import callbacks, trace_metadata
 from app.providers.registry import get_chat
@@ -125,7 +124,7 @@ async def analyze_query(state: GraphState, config: RunnableConfig) -> GraphState
         "\n".join(f"- {code} {name} {year}年年报" for code, name, year in corpus) or "（暂无语料）"
     )
 
-    exp = load_experiment()
+    exp = experiment_of(state)
     profile = exp.router.profile
     history = state.get("messages") or []
 

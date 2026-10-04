@@ -1,0 +1,80 @@
+# 实验 exp05 —— 在 exp04 基础上加入重排
+#
+# 相对 exp04_wider 的唯一变更：rerank.enabled false → true
+#
+# 为什么不在 exp02 上测重排：exp02 的 top_n=5 本身就是瓶颈
+# （页码召回仅 38.8%），在一个被截断卡住的配置上测排序，
+# 测到的是截断而不是排序。必须先把截断放开（exp04，召回 88.8%），
+# 重排的边际贡献才有意义。
+#
+# 预期不乐观：隔离测量显示 gte-rerank-v2 在各截断深度下都没有帮助，
+# top_n=10 时甚至低 9 个百分点。本实验用于确认这一结论，
+# 而不是期待提升——负面结果同样要进实验记录表。
+
+exp_id: exp05_rerank_wide
+description: "exp04 + 重排。在已放开截断的基础上测重排的边际贡献"
+
+chunking:
+  strategy: heading
+  chunk_size: 512
+  overlap: 64
+  parent_child: true
+  table_atomic: true
+  table_metadata: true
+  cross_page_merge: true
+
+retrieval:
+  mode: hybrid
+  top_k_dense: 20
+  top_k_sparse: 20
+  fusion: rrf
+  filters_pushdown: true
+
+rerank:
+  enabled: true
+  model: gte-rerank-v2
+  top_n: 15
+
+query_transform:
+  coref_resolution: true
+  hyde: false
+  decompose: false
+
+parent_expansion:
+  enabled: true
+  dedup_by_parent: true
+  token_budget: 14000
+  keep_table_intact: true
+
+generation:
+  profile: strong
+  require_citation: true
+  require_unit_declaration: true
+  # 重排输出 0-1 相关性分数，实测分布集中在 0.11-0.16，
+  # 与 RRF 的 0.016-0.033 不可比，阈值必须随判分方式重新校准
+  relevance_threshold: 0.05
+  max_retry_on_low_relevance: 1
+
+cache:
+  exact: true
+  semantic: false
+  similarity_threshold: 0.97
+  entity_constraint: strict
+  audit_sample_rate: 0.05
+
+router:
+  profile: light
+  confidence_threshold: 0.7
+  fallback_branch: agent
+
+agent:
+  max_steps: 8
+  max_tool_errors: 3
+  budget_cny: 0.15
+
+eval:
+  dataset: v1
+  bootstrap_rounds: 1000
+  judge_profile: judge
+  numeric_tolerance: 0.005
+  stratified_report: true
