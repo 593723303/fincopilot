@@ -1,0 +1,82 @@
+# 实验 exp06 —— 分块策略对照：fixed vs heading
+#
+# 相对 exp04_wider 的唯一变更：chunking.strategy heading → fixed
+#
+# 目的是回答一个此前没有数据支撑的问题：**按标题层级分块是否真的更好？**
+# 架构文档假定它更好（ADR-005 的前提），但从未与定长分块实际比过。
+#
+# 注意：切换分块策略必须重新入库——块的切法变了，向量也要重算。
+# 两种策略的块按 strategy 字段隔离并存，互不污染（ADR-010）。
+#
+#     python -m scripts.ingest --exp exp06_fixed --force
+#     python -m eval.run --dataset v1 --exp exp06_fixed
+#
+# 其余参数与 exp04_wider 完全一致，包括已验证有效的 top_n=15
+# 与 14000 字符预算——在被截断卡住的配置上比分块策略，
+# 测到的是截断而非分块（这个教训来自 exp03 的重排实验）。
+
+exp_id: exp06_fixed
+description: "exp04 + 定长分块。单因子对照，用于验证标题层级分块的实际收益"
+
+chunking:
+  strategy: fixed
+  chunk_size: 512
+  overlap: 64
+  parent_child: true
+  table_atomic: true
+  table_metadata: true
+  cross_page_merge: true
+
+retrieval:
+  mode: hybrid
+  top_k_dense: 20
+  top_k_sparse: 20
+  fusion: rrf
+  filters_pushdown: true
+
+rerank:
+  enabled: false
+  model: gte-rerank-v2
+  top_n: 15
+
+query_transform:
+  coref_resolution: true
+  hyde: false
+  decompose: false
+
+parent_expansion:
+  enabled: true
+  dedup_by_parent: true
+  token_budget: 14000
+  keep_table_intact: true
+
+generation:
+  profile: strong
+  require_citation: true
+  require_unit_declaration: true
+  relevance_threshold: 0.010
+  max_retry_on_low_relevance: 1
+
+cache:
+  exact: true
+  semantic: false
+  similarity_threshold: 0.97
+  entity_constraint: strict
+  audit_sample_rate: 0.05
+
+router:
+  profile: light
+  confidence_threshold: 0.7
+  fallback_branch: agent
+
+agent:
+  max_steps: 8
+  max_tool_errors: 3
+  budget_cny: 0.15
+
+eval:
+  dataset: v1
+  bootstrap_rounds: 1000
+  judge_profile: judge
+  numeric_tolerance: 0.005
+  stratified_report: true
