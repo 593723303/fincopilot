@@ -275,3 +275,24 @@ def test_refusal_pattern_covers_negation_family(answer):
 def test_refusal_pattern_does_not_misfire(answer):
     """构词匹配只看首句，不能把正常回答连同末尾的免责声明一起判成拒答。"""
     assert is_refusal(answer, False) is False
+
+
+def test_cannot_judge_is_a_refusal():
+    """「无法对……做出判断」是正确拒答，否定词与动词之间隔着整个宾语。"""
+    answer = "无法对「贵州茅台」和「宁德时代」哪只股票更值得投资做出判断。"
+    assert is_refusal(answer, False) is True
+
+
+def test_company_fact_with_negation_is_not_a_refusal():
+    """放宽间隔只对「无法/不能/不便」生效。
+
+    「未 / 没有」常在陈述公司的事实——「公司未对外提供担保」后面跟着
+    正确答案，一并放宽会把它误判成拒答，这是拒答判定前两次反转踩过的坑。
+    """
+    answer = "公司未对外提供担保，2025年营业收入为168,838,102,514.79元。"
+    assert is_refusal(answer, False) is False
+
+
+def test_comparison_wording_alone_is_not_a_refusal():
+    answer = "该比较涉及多维度分析，两家公司营业收入分别为 A 和 B。"
+    assert is_refusal(answer, False) is False

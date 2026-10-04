@@ -31,9 +31,16 @@ from app.rag.retrievers import RetrievedChunk
 
 logger = logging.getLogger(__name__)
 
-# 文本形式的工具调用痕迹：带尖括号的标签，或裸露的参数 JSON
+# 两种「说了要调用、其实没调用」的形态：
+#   1. 把工具调用当正文吐出来（带 </tool_call> 标签或裸露的参数 JSON）
+#   2. 在正文里宣告「调用 calculate 工具进行计算。」然后就结束了
+# 后者实测发生在格力的同比题上：两个数都查对了、公式也列了，
+# 最后一句是「调用 calculate 工具进行计算。」——没有结果，答案等于没给。
+# 判据用一条不变量：**给用户看的最终回答里永远不该出现内部工具名**。
 MALFORMED_CALL = re.compile(
-    r'</?tool_call>|<\|tool_call\|>|^\s*\{\s*"(expression|company|query)"\s*:',
+    r'</?tool_call>|<\|tool_call\|>'
+    r'|^\s*\{\s*"(expression|company|query)"\s*:'
+    r'|\bcalculate\b|\bretrieve_report\b',
     re.M,
 )
 

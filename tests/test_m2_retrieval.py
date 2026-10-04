@@ -386,3 +386,22 @@ def test_summary_hint_needs_both_sides():
 
     assert needs_summary_table([], [2025]) is False
     assert needs_summary_table([2023], []) is False
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "调用 calculate 工具进行计算。",
+        "使用 retrieve_report 查询两家公司的数据",
+    ],
+)
+def test_announced_but_uncalled_tool_is_detected(text):
+    """模型在正文里宣告「调用 calculate 工具进行计算」然后就结束了。
+
+    实测格力的同比题：两个数都查对了、公式也列了，最后一句是这个，
+    没有结果——答案等于没给。判据是一条不变量：
+    给用户看的最终回答里永远不该出现内部工具名。
+    """
+    from app.graph.nodes.agent import MALFORMED_CALL
+
+    assert MALFORMED_CALL.search(text) is not None

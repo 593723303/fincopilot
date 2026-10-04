@@ -196,6 +196,15 @@ REFUSAL_PATTERN = re.compile(
     r"(披露|提供|找到|检索到|查到|给出|回答|收录|包含|提及|公布|列示|存在)"
 )
 
+# 第二种骨架：「无法对……做出判断」——否定词与动词之间隔着一整个宾语。
+# 这里才放宽间隔，而且只对「无法 / 不能 / 不便」放宽：这几个词说的是
+# **助手自己做不到**。「未 / 没有」常常在陈述公司的事实
+# （「公司未对外提供担保，营业收入为 X」），放宽会把正确回答误判成拒答——
+# 这正是拒答判定前两次反转踩过的坑。
+CANNOT_JUDGE = re.compile(
+    r"(无法|不能|不便)[^。！？\n]{0,30}?(?:做出|给出|进行)?\s*(判断|评估|比较|推荐|预测|建议)"
+)
+
 
 def is_refusal(answer: str, refused_flag: bool) -> bool:
     """判断回答是否构成拒答。
@@ -212,7 +221,7 @@ def is_refusal(answer: str, refused_flag: bool) -> bool:
     if refused_flag:
         return True
     first = SENTENCE_END.split(answer.strip(), maxsplit=1)[0]
-    if REFUSAL_PATTERN.search(first):
+    if REFUSAL_PATTERN.search(first) or CANNOT_JUDGE.search(first):
         return True
     return any(marker in first for marker in REFUSAL_MARKERS)
 
