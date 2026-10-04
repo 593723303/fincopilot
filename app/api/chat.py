@@ -127,6 +127,21 @@ async def _event_stream(
             elif kind == "on_chain_end" and name == "LangGraph":
                 final = ev.get("data", {}).get("output") or {}
 
+        # Agent 的工具调用轨迹。这是 agent 分支最值得展示的部分——
+        # 用户能看见它查了哪几家、算了什么式子，答案才有可核验性。
+        # 放在结尾推送而不是实时推：中间步骤在 astream_events 里
+        # 属于节点内部循环，拿不到稳定的事件边界。
+        for step in final.get("scratchpad") or []:
+            yield _sse(
+                "tool_step",
+                {
+                    "step": step.get("step"),
+                    "tool": step.get("tool"),
+                    "args": step.get("args"),
+                    "result": (step.get("result") or "")[:200],
+                },
+            )
+
         # 引用在生成之后才完成核验，故在结尾统一推送
         for c in final.get("citations") or []:
             yield _sse("citation", c)

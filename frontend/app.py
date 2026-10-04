@@ -50,6 +50,7 @@ async def on_message(message: cl.Message) -> None:
     conv_id = cl.user_session.get("conv_id")
     answer = cl.Message(content="")
     citations: list[dict] = []
+    tool_steps: list[dict] = []
     steps_msg: cl.Message | None = None
     done_info: dict = {}
 
@@ -85,6 +86,9 @@ async def on_message(message: cl.Message) -> None:
                     elif event == "token":
                         await answer.stream_token(data.get("text", ""))
 
+                    elif event == "tool_step":
+                        tool_steps.append(data)
+
                     elif event == "citation":
                         citations.append(data)
 
@@ -105,6 +109,21 @@ async def on_message(message: cl.Message) -> None:
         return
 
     await answer.send()
+
+    # 工具轨迹放在引用之前：先让人看到「它是怎么得出这个数的」，
+    # 再看引用原文。agent 分支的可核验性全靠这一段。
+    if tool_steps:
+        lines = []
+        for st in tool_steps:
+            args = ", ".join(f"{k}={v}" for k, v in (st.get("args") or {}).items())
+            lines.append(f"**{st.get('step')}. {st.get('tool')}**（{args}）")
+            snippet = (st.get("result") or "")[:200]
+            lines.append(f"```\n{snippet}\n```")
+        await cl.Message(
+            content=f"调用了 {len(tool_steps)} 次工具",
+            elements=[cl.Text(name="分析过程", content="\n\n".join(lines), display="side")],
+            author="系统",
+        ).send()
 
     if citations:
         elements = [
