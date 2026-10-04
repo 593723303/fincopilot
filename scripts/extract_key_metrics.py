@@ -37,6 +37,7 @@ WANTED = [
     "营业总收入",
     "利润总额",
     "归属于上市公司股东的净利润",
+    "归属于本公司股东的净利润",
     "归属于上市公司股东的扣除非经常性损益的净利润",
     "经营活动产生的现金流量净额",
     "归属于上市公司股东的净资产",
@@ -45,24 +46,58 @@ WANTED = [
 ]
 
 YEAR_IN_HEADER = re.compile(r"(20\d{2})\s*年")
+# 「本期比上年同期增减(%)」「2025年比2024年增减(%)」这类列头里也写着年份，
+# 但它是变动率列，不是某一年的数值列。不排除掉，中国神华的增减列
+# 会被当成 2025 年列，取出来的「2025 年营业收入」其实是 -13.2。
+NOT_A_YEAR_COLUMN = re.compile(r"增减|增长|变动|幅度|%|％")
+# 「调整后/调整前」「重述后/重述前」子列头：上一年度被拆成两列，
+# 数据行会比表头多出几列
+RESTATED_SUBHEADER = re.compile(r"调整[前后]|重述[前后]|重列[前后]")
 NUMBER = re.compile(r"-?[\d,]+(?:\.\d+)?")
 
 
+#  科目名后缀里的量纲：「营业收入（千元）」要能和「营业收入」对上
+NAME_SUFFIX = re.compile(r"[（(][^）)]*[）)]\s*$")
+
+
 def parse_row(line: str) -> tuple[str, list[str]] | None:
-    """把 Markdown 表格行切成 (科目名, 其余单元格)。"""
+    """把表格行切成 (科目名, 数值单元格)，**按非空单元格的顺序**切。
+
+    不能按原始列号切。深交所格式的表合并单元格多，同一张表里
+    表头与数据行的列位是错开的：
+
+        表头   |  |  |  |  | 2025 年 |  |  | 2024 年 | ...   → 年份在第 4、7 列
+        数据行 |  | 营业收入（千元） |  | 456,451,731 | ...   → 数值在第 3、6 列
+
+    按列号取会整列错位，取出来的「2025 年营业收入」其实是空值。
+    按非空顺序取则两种格式都对得上。
+    """
     cells = [c.strip() for c in line.strip().strip("|").split("|")]
-    if len(cells) < 2:
+    filled = [i for i, c in enumerate(cells) if c]
+    if len(filled) < 2:
         return None
-    return cells[0], cells[1:]
+    name = cells[filled[0]]
+    return NAME_SUFFIX.sub("", name).strip(), [cells[i] for i in filled[1:]]
 
 
-def year_columns(header_cells: list[str]) -> dict[int, int]:
-    """列号 → 年份。只认列头里明写年份的列。"""
-    out: dict[int, int] = {}
-    for idx, cell in enumerate(header_cells):
-        if m := YEAR_IN_HEADER.search(cell):
-            out[idx] = int(m.group(1))
-    return out
+def header_years(line: str) -> tuple[int, dict[int, int]] | None:
+    """解析表头，返回 (数值列数, 第几个数值列 → 年份)。
+
+    数值列从**第一个带年份的单元格**开始数：上交所格式表头首格是
+    「主要会计数据」这样的列名，深交所格式首格是空的，
+    从年份起算才能让两种格式的列数与数据行对齐。
+    """
+    cells = [c.strip() for c in line.strip().strip("|").split("|") if c.strip()]
+    first_year = next((i for i, c in enumerate(cells) if YEAR_IN_HEADER.search(c)), None)
+    if first_year is None:
+        return None
+    value_cells = cells[first_year:]
+    years = {
+        i: int(m.group(1))
+        for i, c in enumerate(value_cells)
+        if (m := YEAR_IN_HEADER.search(c)) and not NOT_A_YEAR_COLUMN.search(c)
+    }
+    return len(value_cells), years
 
 
 def corroborate(doc_pdf: pymupdf.Document, page_start: int, raw: str, page_end: int = 0) -> bool:
@@ -101,12 +136,12 @@ def extract(doc: ParsedDocument, doc_pdf: pymupdf.Document) -> list[dict]:
         lines = [ln for ln in blk.text.splitlines() if ln.startswith("|")]
         if len(lines) < 3:
             continue
-        header = parse_row(lines[0])
-        if not header:
-            continue
-        cols = year_columns(header[1])
-        if not cols:
+        parsed_header = header_years(lines[0])
+        if not parsed_header:
             continue  # 列头没有年份的表不要——年份归属无从验证
+        n_values, cols = parsed_header
+        # 表里有没有「调整后/调整前」这类子列头，决定列数对不上时能否解释
+        restated = any(RESTATED_SUBHEADER.search(ln) for ln in lines[:4])
         for line in lines[2:]:  # 跳过分隔行
             parsed = parse_row(line)
             if not parsed:
@@ -114,9 +149,20 @@ def extract(doc: ParsedDocument, doc_pdf: pymupdf.Document) -> list[dict]:
             name, cells = parsed
             if name not in WANTED:
                 continue
-            for idx, year in cols.items():
-                if idx >= len(cells):
-                    continue
+            # 列数对不上只在一种情况下还敢取数：表里确有「调整后/调整前」
+            # （重述后/重述前）子列头——长江电力、中国神华就是这样，
+            # 上一年度被拆成两列，数据行因此比表头多出几列。
+            # 这时中间各列对应哪一年无从判断，不猜；但**最左的数值列一定是当年**
+            # （当年不存在调整前后之分），只取这一列，其余整行放弃。
+            # 没有子列头却列数不符，说明是别的原因（科目名跨行折断、
+            # 合并单元格错位），那就整行弃用——猜错了也看不出来。
+            if len(cells) == n_values:
+                take = cols
+            elif restated and 0 in cols:
+                take = {0: cols[0]}
+            else:
+                continue
+            for idx, year in take.items():
                 raw = cells[idx]
                 if not NUMBER.fullmatch(raw.replace(" ", "")):
                     continue
@@ -130,6 +176,7 @@ def extract(doc: ParsedDocument, doc_pdf: pymupdf.Document) -> list[dict]:
                         "page": blk.page_start,
                         "heading": blk.heading_path,
                         "source_line": line[:160],
+                        "partial_row": len(cells) != n_values,
                         "corroborated": corroborate(doc_pdf, blk.page_start, raw, blk.page_end),
                     }
                 )
