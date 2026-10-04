@@ -166,6 +166,16 @@ python -m eval.run --dataset seed --exp exp01_baseline              # 指定实�
 
 ---
 
+## 文档
+
+| 文档 | 内容 |
+|---|---|
+| [`docs/lessons.md`](docs/lessons.md) | **开发经验记录**——遇到的真实问题、诊断过程、哪些判断是错的及为什么 |
+| [`docs/benchmarks.md`](docs/benchmarks.md) | 实验记录表，逐行累积的消融数据 |
+| [`docs/open-issues.md`](docs/open-issues.md) | 已知限制与待办，同时作为验收清单 |
+
+---
+
 ## 已知限制
 
 [`docs/open-issues.md`](docs/open-issues.md) 记录全部未解决问题与处理计划，
