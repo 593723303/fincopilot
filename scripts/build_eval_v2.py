@@ -1,0 +1,219 @@
+"""由 key_metrics.json 底稿生成评估集 v2。
+
+    python -m scripts.build_eval_v2                 生成 eval/datasets/v2.jsonl
+    python -m scripts.build_eval_v2 --sample 20     只打印抽样供人工核对
+
+v1 只有两家公司 61 题，M5 结束时已连续两次满分——指标失去判别力
+（open-issues.md P0-1）。v2 的目的是把语料扩到 12 家、题量扩到 200+，
+重新获得判别力，并**检验那些规则到底是通用的还是只对茅台和宁德时代成立**。
+
+三条出题纪律：
+
+1. **只用通过原文对账的行**。底稿是解析器抽的，而被评估的系统用的是同一个
+   解析器——不独立对账的话，解析器错了标准答案和系统回答会一起错。
+2. **年份必须来自明写年份的列头**，不靠位置推断（M5 踩过这个坑）。
+3. **同一公司同一科目若多年数值相同，整组弃用**——答对答错分不出来。
+
+v1 的 61 题原样并入 v2：它们是人工核验过的，丢掉可惜。
+但 v2 与 v1 的指标**不可比**，历史 run 不能和 v2 的 run 放在一张表里。
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import random
+import sys
+from collections import defaultdict
+from pathlib import Path
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+DRAFT = PROJECT_ROOT / "tmp" / "key_metrics.json"
+V1 = PROJECT_ROOT / "eval" / "datasets" / "v1.jsonl"
+OUT = PROJECT_ROOT / "eval" / "datasets" / "v2.jsonl"
+
+SEED = 42
+
+# 语料外的公司：用于「应拒答」题。刻意选知名度高的，
+# 模型最容易凭预训练知识直接作答
+OUT_OF_CORPUS = [
+    ("五粮液", "2025年的营业收入"),
+    ("比亚迪", "2025年的研发投入"),
+    ("腾讯控股", "2025年的营业收入"),
+    ("小米集团", "2025年的净利润"),
+    ("京东方A", "2025年的营业收入"),
+    ("中国中免", "2025年的归母净利润"),
+]
+
+
+def load_draft() -> dict[str, list[dict]]:
+    if not DRAFT.exists():
+        print(f"底稿不存在：{DRAFT}\n先执行 python -m scripts.extract_key_metrics")
+        sys.exit(1)
+    return json.loads(DRAFT.read_text(encoding="utf-8"))
+
+
+def company_names() -> dict[str, str]:
+    """从 data/raw 的文件名取公司简称，避免再查一次库。"""
+    out: dict[str, str] = {}
+    for pdf in (PROJECT_ROOT / "data" / "raw").glob("*.pdf"):
+        parts = pdf.name.split("_")
+        if len(parts) >= 2:
+            out[parts[0]] = parts[1]
+    return out
+
+
+def usable(rows: list[dict]) -> list[dict]:
+    """过滤出可用于出题的行。"""
+    rows = [r for r in rows if r.get("corroborated") and r.get("unit")]
+    # 同一 (科目, 数值) 跨年重复 → 年份分不出来，整组弃用
+    by_metric: dict[str, list[dict]] = defaultdict(list)
+    for r in rows:
+        by_metric[r["metric"]].append(r)
+    keep: list[dict] = []
+    for group in by_metric.values():
+        values = [r["value"] for r in group]
+        if len(set(values)) != len(values):
+            continue
+        keep.extend(group)
+    return keep
+
+
+def table_items(code: str, name: str, rows: list[dict]) -> list[dict]:
+    out = []
+    for r in rows:
+        out.append(
+            {
+                "question": f"{name}{r['year']}年{r['metric']}是多少？",
+                "category": "table",
+                "difficulty": "单表直读",
+                "ground_truth": f"{r['raw']}{r['unit']}",
+                "numeric_value": r["value"],
+                "unit": r["unit"],
+                "metric_name": r["metric"],
+                "expected_doc_keys": [f"{code}_{max(x['year'] for x in rows)}_annual"],
+                "expected_pages": [r["page"]],
+                "source": "auto_extracted",
+                "verified": True,
+                "note": f"{r['heading']} 第{r['page']}页，列头年份 {r['year']}；原文行：{r['source_line']}",
+            }
+        )
+    return out
+
+
+def multihop_items(code: str, name: str, rows: list[dict]) -> list[dict]:
+    """同比变化题：同一科目取相邻两年。"""
+    by_metric: dict[str, dict[int, dict]] = defaultdict(dict)
+    for r in rows:
+        by_metric[r["metric"]][r["year"]] = r
+    doc_year = max(r["year"] for r in rows)
+    out = []
+    for metric, per_year in by_metric.items():
+        years = sorted(per_year)
+        if len(years) < 2:
+            continue
+        cur, prev = years[-1], years[-2]
+        a, b = per_year[cur]["value"], per_year[prev]["value"]
+        if b == 0:
+            continue
+        pct = round((a - b) / abs(b) * 100, 2)
+        basis = f"({per_year[cur]['raw']} - {per_year[prev]['raw']}) / {per_year[prev]['raw']}"
+        out.append(
+            {
+                "question": f"{name}{cur}年{metric}比{prev}年变化了百分之多少？",
+                "category": "multihop",
+                "difficulty": "跨列计算",
+                "ground_truth": f"约{pct}%",
+                "numeric_value": pct,
+                "unit": "%",
+                "metric_name": f"{metric}同比",
+                "expected_doc_keys": [f"{code}_{doc_year}_annual"],
+                "expected_pages": sorted({per_year[cur]["page"], per_year[prev]["page"]}),
+                "source": "auto_extracted",
+                "verified": True,
+                "note": f"{basis} = {pct}%",
+            }
+        )
+    return out
+
+
+def refuse_items(names: set[str]) -> list[dict]:
+    out = []
+    for company, what in OUT_OF_CORPUS:
+        if company in names:
+            continue  # 已入库就不能再当「应拒答」
+        out.append(
+            {
+                "question": f"{company}{what}是多少？",
+                "category": "refuse",
+                "difficulty": "语料外公司",
+                "ground_truth": "（应拒答）",
+                "expected_doc_keys": [],
+                "expected_pages": [],
+                "source": "manual",
+                "verified": True,
+                "note": f"{company} 不在已入库语料中，应明确说明未收录，不得凭预训练知识作答",
+            }
+        )
+    return out
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--sample", type=int, default=0, help="只抽样打印 N 条供人工核对，不写文件")
+    ap.add_argument("--per-company", type=int, default=12, help="每家公司最多出多少道表格题")
+    args = ap.parse_args()
+
+    rng = random.Random(SEED)
+    draft = load_draft()
+    names = company_names()
+
+    items: list[dict] = []
+    stats: list[tuple[str, int, int]] = []
+    for code, rows in sorted(draft.items()):
+        name = names.get(code, code)
+        keep = usable(rows)
+        if not keep:
+            stats.append((f"{code} {name}", 0, 0))
+            continue
+        tables = table_items(code, name, keep)
+        rng.shuffle(tables)
+        tables = tables[: args.per_company]
+        multis = multihop_items(code, name, keep)
+        rng.shuffle(multis)
+        multis = multis[:4]
+        items.extend(tables + multis)
+        stats.append((f"{code} {name}", len(tables), len(multis)))
+
+    items.extend(refuse_items(set(names.values())))
+
+    # v1 原样并入：人工核验过的题目不该丢
+    v1 = [json.loads(line) for line in V1.read_text(encoding="utf-8").splitlines() if line.strip()]
+    seen = {it["question"] for it in items}
+    merged = items + [it for it in v1 if it["question"] not in seen]
+
+    print(f"{'公司':<18}{'表格题':>8}{'多跳题':>8}")
+    for label, a, b in stats:
+        print(f"{label:<18}{a:>8}{b:>8}")
+    by_cat: dict[str, int] = defaultdict(int)
+    for it in merged:
+        by_cat[it["category"]] += 1
+    print(f"\n合计 {len(merged)} 题（v1 带入 {len(merged) - len(items)} 题）：{dict(by_cat)}")
+
+    if args.sample:
+        print(f"\n── 随机抽样 {args.sample} 条，逐条核对页码与口径 ──")
+        for it in rng.sample([i for i in merged if i["source"] == "auto_extracted"], args.sample):
+            print(f"\nQ: {it['question']}")
+            print(f"   答案 {it['ground_truth']}  页码 {it['expected_pages']}")
+            print(f"   依据 {it['note'][:150]}")
+        return 0
+
+    OUT.write_text(
+        "\n".join(json.dumps(it, ensure_ascii=False) for it in merged) + "\n", encoding="utf-8"
+    )
+    print(f"\n写入 {OUT}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

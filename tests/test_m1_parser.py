@@ -13,10 +13,12 @@ from pathlib import Path
 import pytest
 
 from app.rag.pdf_parser import (
+    PROSE_UNIT_PAT,
     STATEMENT_SCOPE,
     TableContext,
     inline_unit,
     is_numeric_table,
+    looks_tabular,
     normalize_cell,
     parse_pdf,
     render_table,
@@ -213,3 +215,40 @@ def test_scope_replaces_heading_fallback():
     ctx = TableContext(unit="元", scope="合并利润表")
     out = render_table([["项目", "本期"]], ctx, "第八节财务报告 > 二、财务报表")
     assert "二、财务报表" not in out
+
+
+# ── 括号式单位声明（银行 / 保险年报的写法） ──────────────
+
+
+@pytest.mark.parametrize(
+    ("line", "expected"),
+    [
+        ("（人民币百万元，特别注明除外）", "百万元"),
+        ("（除特别注明外，货币单位均以人民币百万元列示）", "百万元"),
+        ("（除特别注明外，金额单位为人民币百万元）", "百万元"),
+        ("（人民币千元）", "千元"),
+    ],
+)
+def test_prose_unit_declaration(line, expected):
+    """招商银行前 120 页 39 张表，单位无一被「单位：X」识别到。"""
+    m = PROSE_UNIT_PAT.search(line)
+    assert m is not None and m.group(1) == expected
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "人民币7,159,767百万元，占总资产的54.78%",
+        "（本公司于2024年完成重组）",
+        "（简称「公司」）",
+    ],
+)
+def test_prose_unit_ignores_amounts_in_prose(line):
+    """括号里带数字的是具体金额，不是整张表的量纲声明。"""
+    assert PROSE_UNIT_PAT.search(line) is None
+
+
+def test_looks_tabular_needs_grouped_numbers():
+    """页码、年份到处都是，带千分位的数字基本只出现在金额表里。"""
+    assert looks_tabular("1,745,679 " * 12) is True
+    assert looks_tabular("2025年年度报告 第 183 页 公司于2024年完成重组") is False

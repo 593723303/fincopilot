@@ -37,6 +37,16 @@ OTHER_UNITS = "股|份|件|吨|千克|平方米|人|个|%"
 UNIT_PAT = re.compile(rf"单位[：:\s]*(?:人民币)?\s*({AMOUNT_UNITS}|{OTHER_UNITS})")
 AMOUNT_UNIT_PAT = re.compile(rf"单位[：:\s]*(?:人民币)?\s*({AMOUNT_UNITS})")
 CURRENCY_PAT = re.compile(r"币种[：:\s]*([一-龥]{2,6})")
+# 银行与保险的年报不写「单位：X」，而是在括号里用一句话声明，例如
+#   （人民币百万元，特别注明除外）
+#   （除特别注明外，货币单位均以人民币百万元列示）
+# 只认「单位：」会让这类年报的表格全部没有量纲——实测招商银行
+# 前 120 页 39 张表的单位无一被识别。
+# 括号内不允许出现数字，用来挡掉正文里的「（人民币7,159,767百万元，占比…）」
+# 这种叙述句——那是一个具体金额，不是整张表的量纲声明。
+PROSE_UNIT_PAT = re.compile(
+    rf"[（(][^（()）\n\d]{{0,30}}?(?:人民币)?\s*({AMOUNT_UNITS})"
+)
 # 判断单元格是否为数值：含千分位、小数、负号或括号负数
 NUMERIC_CELL = re.compile(r"^[-－(（]?[\d,，]+(\.\d+)?[)）%]?$")
 SECTION_PAT = re.compile(r"^第[一二三四五六七八九十]{1,3}节\s*(.+)$")
@@ -271,10 +281,21 @@ def extract_context(
         ctx.caption = ln[:60]
         break
 
+    # 2.5) 表格上方的括号式声明（银行/保险年报的写法）
+    if not ctx.unit and numeric:
+        for ln in reversed(lines):
+            if m := PROSE_UNIT_PAT.search(ln):
+                ctx.unit, ctx.unit_source = m.group(1), "prose_above"
+                break
+
     # 3) 整页范围 —— 仅对数值表，且只接受金额量纲
     #    （页面上别处的「单位：股」不应落到本表上）
     if not ctx.unit and numeric and (m := AMOUNT_UNIT_PAT.search(page_text)):
         ctx.unit, ctx.unit_source = m.group(1), "page"
+
+    # 3.5) 整页范围的括号式声明。放在「单位：」之后，是因为显式声明更可信
+    if not ctx.unit and numeric and (m := PROSE_UNIT_PAT.search(page_text)):
+        ctx.unit, ctx.unit_source = m.group(1), "prose_page"
     if not ctx.currency and (m := CURRENCY_PAT.search(page_text)):
         ctx.currency = m.group(1)
 
@@ -285,6 +306,23 @@ def extract_context(
     return ctx, skip_rows
 
 
+#  一页至少要有这么多个带千分位的数字，才值得用文本策略再试一次
+TABULAR_NUMBER_HINT = 12
+# 报表口径最多向后继承几页。三大报表最长也就三四页，
+# 超出这个跨度还在继承，继承到的一定是别的表
+SCOPE_MAX_PAGES = 4
+GROUPED_NUMBER = re.compile(r"\d{1,3}(?:,\d{3})+")
+
+
+def looks_tabular(page_text: str) -> bool:
+    """这一页看起来是否含有成片的数字——用于决定要不要回退到文本策略。
+
+    判据用「带千分位的数字」而不是所有数字：页码、年份、条款编号到处都是，
+    而 1,745,679 这种写法基本只出现在金额表里。
+    """
+    return len(GROUPED_NUMBER.findall(page_text)) >= TABULAR_NUMBER_HINT
+
+
 def dominant_unit(doc: pymupdf.Document, sample_pages: int = 60) -> str | None:
     """统计文档主导量纲，作为缺省继承值。
 
@@ -293,7 +331,12 @@ def dominant_unit(doc: pymupdf.Document, sample_pages: int = 60) -> str | None:
     """
     counter: dict[str, int] = {}
     for i in range(min(sample_pages, doc.page_count)):
-        for m in UNIT_PAT.finditer(doc[i].get_text("text") or ""):
+        text = doc[i].get_text("text") or ""
+        for m in UNIT_PAT.finditer(text):
+            counter[m.group(1)] = counter.get(m.group(1), 0) + 1
+        # 括号式声明同样计入，否则银行年报统计不出任何主导量纲，
+        # 兜底一层形同虚设
+        for m in PROSE_UNIT_PAT.finditer(text):
             counter[m.group(1)] = counter.get(m.group(1), 0) + 1
     return max(counter, key=counter.get) if counter else None
 
@@ -379,6 +422,7 @@ def parse_pdf(path: str | Path, max_pages: int | None = None) -> ParsedDocument:
     # 报表口径跨页继承；章节一变就失效，避免把「合并」带进财务附注
     scope_title: str | None = None
     scope_heading: str | None = None
+    scope_page: int | None = None
 
     for i in range(limit):
         page = doc[i]
@@ -387,6 +431,16 @@ def parse_pdf(path: str | Path, max_pages: int | None = None) -> ParsedDocument:
 
         try:
             raw_tables = list(page.find_tables())
+            # 无边框表格：默认策略靠划线识别，整页找不到任何表。
+            # 实测中国平安年报 370 页里只有 6 页能检出表格，
+            # 而第 187 页的合并资产负债表（53 行 × 4 列）赫然在列——
+            # 它只是没画框线。改用文本对齐策略就能抽出来。
+            # 仅在默认策略颗粒无收、且页面确实有成片数字时才回退，
+            # 因为文本策略对普通正文页会切出大量伪表格。
+            if not raw_tables and looks_tabular(page_text):
+                raw_tables = list(page.find_tables(strategy="text"))
+                if raw_tables:
+                    logger.debug("第 %d 页改用文本策略抽出 %d 张表", i + 1, len(raw_tables))
         except Exception as exc:  # 个别页版面异常不应中断整篇解析
             logger.warning("第 %d 页表格检测失败：%s", i + 1, exc)
             raw_tables = []
@@ -453,6 +507,7 @@ def parse_pdf(path: str | Path, max_pages: int | None = None) -> ParsedDocument:
                     if hit:
                         scope_title = hit.group(0)
                         scope_heading = tracker.path()
+                        scope_page = i
                 if not pending_text:
                     pending_heading = tracker.path()
                 if not is_toc_line(seg) and len(seg) > 8:
@@ -467,11 +522,16 @@ def parse_pdf(path: str | Path, max_pages: int | None = None) -> ParsedDocument:
             ctx, skip_rows = extract_context(page, t.bbox, page_text, doc_unit, rows)
             # 章节一变就丢弃继承来的口径：财务附注里也会出现「合并资产负债表」
             # 这几个字，继续沿用会把附注表错标成三大报表
-            if scope_title and scope_heading == heading:
+            # 口径的有效期有两道闸：章节一变即失效，以及最多跨 SCOPE_MAX_PAGES 页。
+            # 只靠章节是不够的——中国平安的年报章节标题识别不出来，
+            # 继承会一路带到财务附注，把 35 张附注表全标成「合并现金流量表」。
+            # 三大报表再长也就三四页，超出这个跨度的继承必然是错的。
+            expired = scope_page is None or (i - scope_page) > SCOPE_MAX_PAGES
+            if scope_title and scope_heading == heading and not expired:
                 ctx.scope = scope_title
                 heading = f"{heading} > {scope_title}"
             else:
-                scope_title = scope_heading = None
+                scope_title = scope_heading = scope_page = None
             flags: list[str] = []
             if len(rows[0]) > 6:
                 flags.append("wide_table")
