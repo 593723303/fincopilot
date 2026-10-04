@@ -373,12 +373,22 @@ def test_summary_hint_for_year_beyond_statements():
     assert needs_summary_table([2023], [2025]) is True
 
 
-@pytest.mark.parametrize("year", [2024, 2025])
-def test_no_summary_hint_for_current_or_prior_year(year):
-    """本期与上期在三大报表里就有，不必把查询往汇总表上引。"""
+def test_summary_hint_for_prior_year_too():
+    """上期（2024）同样需要引导。
+
+    三大报表用「本期/上期」标列，只有汇总表写着具体年份；
+    实测伊利 2024 年营业收入因此被拒答。
+    """
     from app.graph.nodes.rag import needs_summary_table
 
-    assert needs_summary_table([year], [2025]) is False
+    assert needs_summary_table([2024], [2025]) is True
+
+
+def test_no_summary_hint_for_the_report_year():
+    """当年那一列在哪张表里都是第一列，不需要额外引导。"""
+    from app.graph.nodes.rag import needs_summary_table
+
+    assert needs_summary_table([2025], [2025]) is False
 
 
 def test_summary_hint_needs_both_sides():
