@@ -361,6 +361,59 @@ STATEMENT_SCOPE = re.compile(
 )
 
 
+YEAR_HEADER = re.compile(r"(20\d{2})\s*年")
+# 列头里写着年份、但本身是变动率列，不是某一年的数值列
+NOT_A_YEAR_COLUMN = re.compile(r"增减|增长|变动|幅度|%|％")
+BREAKDOWN_MAX_ROWS = 24
+
+
+def year_breakdown(header: list[str], body: list[list[str]]) -> list[str]:
+    """把三年并列表按年份展开成一行一行的明细。
+
+    这是整个解析里最后一处「别让模型去推断结构」的改造，
+    与「单位写进正文」「口径写进正文」同一个思路。
+
+    三年并列表长这样：
+
+        | 主要会计数据 | 2025年 | 2024年 | 本期比上年同期增减(%) | 2023年 |
+        | 营业收入 | 168,838,102,514.79 | 170,899,152,276.34 | -1.21 | 147,693,604,994.14 |
+
+    要答对「2023 年营业收入」，模型得先数清楚第几列对应哪一年。
+    实测它经常数错——问 2024 年给出 2025 年的数，问 2023 年给出 2024 年的数，
+    而且这个错误在 flash 与 plus 上都出现，加提示词规则也压不住。
+
+    干脆把对齐这件事在解析阶段做完，额外输出一段：
+
+        【按年份】营业收入：2025年=168,838,102,514.79；2024年=170,899,152,276.34；2023年=147,693,604,994.14
+
+    这样模型只需要做字符串匹配，不需要做列对齐。
+
+    只在能确定对齐时才输出：列头里至少有两个年份，且数据行的非空单元格数
+    与列头一致。对不齐就不输出——宁可没有，也不能给一段错的。
+    """
+    cols = {
+        i: int(m.group(1))
+        for i, c in enumerate(header)
+        if (m := YEAR_HEADER.search(c)) and not NOT_A_YEAR_COLUMN.search(c)
+    }
+    if len(cols) < 2:
+        return []
+
+    out: list[str] = []
+    for row in body[:BREAKDOWN_MAX_ROWS]:
+        name = next((c for c in row if c), "")
+        if not name or YEAR_HEADER.search(name):
+            continue
+        parts = [
+            f"{year}年={row[i]}"
+            for i, year in sorted(cols.items(), key=lambda kv: -kv[1])
+            if i < len(row) and NUMERIC_CELL.match(row[i].replace(" ", ""))
+        ]
+        if len(parts) >= 2:
+            out.append(f"【按年份】{name}：" + "；".join(parts))
+    return [""] + out if out else []
+
+
 def render_table(rows: list[list[str]], ctx: TableContext, heading: str) -> str:
     """把表格渲染为带量纲声明的 Markdown。
 
@@ -402,6 +455,8 @@ def render_table(rows: list[list[str]], ctx: TableContext, heading: str) -> str:
     lines.append("|" + "|".join([" --- "] * width) + "|")
     for row in body:
         lines.append("| " + " | ".join(row) + " |")
+
+    lines.extend(year_breakdown(header, body))
     return "\n".join(lines)
 
 

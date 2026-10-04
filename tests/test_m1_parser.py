@@ -252,3 +252,46 @@ def test_looks_tabular_needs_grouped_numbers():
     """页码、年份到处都是，带千分位的数字基本只出现在金额表里。"""
     assert looks_tabular("1,745,679 " * 12) is True
     assert looks_tabular("2025年年度报告 第 183 页 公司于2024年完成重组") is False
+
+
+# ── 三年并列表按年份展开 ────────────────────────────────
+
+
+def _three_year_rows():
+    return [
+        ["主要会计数据", "2025年", "2024年", "本期比上年同期增减(%)", "2023年"],
+        ["营业收入", "168,838,102,514.79", "170,899,152,276.34", "-1.21", "147,693,604,994.14"],
+    ]
+
+
+def test_year_breakdown_pairs_each_value_with_its_year():
+    """把列对齐这件事在解析阶段做完，模型只需字符串匹配。
+
+    实测模型经常数错列——问 2024 年给 2025 年的数，flash 与 plus 都会错，
+    加提示词规则也压不住。
+    """
+    out = render_table(_three_year_rows(), TableContext(unit="元"), "x")
+    assert "【按年份】营业收入：2025年=168,838,102,514.79" in out
+    assert "2024年=170,899,152,276.34" in out
+    assert "2023年=147,693,604,994.14" in out
+
+
+def test_year_breakdown_skips_the_change_rate_column():
+    """「本期比上年同期增减(%)」列头里也写着年份，但它不是某一年的数值列。"""
+    out = render_table(_three_year_rows(), TableContext(unit="元"), "x")
+    assert "=-1.21" not in out
+
+
+def test_no_breakdown_when_columns_are_relative():
+    """只有「本期/上期」的表没有年份可对齐，不输出——宁可没有，不能给错的。"""
+    rows = [["项目", "本期发生额", "上期发生额"], ["营业收入", "1,000", "2,000"]]
+    assert "【按年份】" not in render_table(rows, TableContext(unit="元"), "x")
+
+
+def test_no_breakdown_when_row_has_too_few_numbers():
+    """数值不足两个就对不出年份，整行跳过。"""
+    rows = [
+        ["主要会计数据", "2025年", "2024年", "2023年"],
+        ["是否适用", "是", "", ""],
+    ]
+    assert "【按年份】" not in render_table(rows, TableContext(), "x")
