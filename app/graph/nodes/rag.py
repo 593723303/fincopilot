@@ -98,7 +98,24 @@ def _merge_usage(state: GraphState, usage: TokenUsage) -> dict:
 _FILLER = ("是多少", "多少", "是什么", "请问", "的具体数值", "吗", "呢", "？", "?", "，", ",")
 
 
-async def keyword_query_of(question: str, codes: list[str]) -> str:
+# 年报的三大报表只有「本期 / 上期」两列。比报告年度早两年及以上的数据，
+# 整份年报里只存在于「近三年主要会计数据」这张汇总表中。
+# 不点名这张表的话，检索会被标题几乎逐字相同的现金流量表附注淹没——
+# 实测格力「2023年经营活动产生的现金流量净额」里，汇总表 p7 排第 20 名
+# （正好被 top_n=15 截掉），加上这个提示后升到第 12 名。
+SUMMARY_TABLE_HINT = "近三年主要会计数据"
+# 本期、上期之外就要查汇总表
+YEARS_BEYOND_STATEMENTS = 2
+
+
+def needs_summary_table(years: list[int], report_years: list[int]) -> bool:
+    """问的年份是否早到只能从多年汇总表里取。"""
+    if not years or not report_years:
+        return False
+    return min(years) <= max(report_years) - YEARS_BEYOND_STATEMENTS
+
+
+async def keyword_query_of(question: str, codes: list[str], years: list[int] | None = None) -> str:
     """BM25 用的关键词查询：剥掉公司名与疑问词。
 
     公司名已经由 company_code 标量过滤处理过了，再留在关键词里纯属噪声——
@@ -112,11 +129,13 @@ async def keyword_query_of(question: str, codes: list[str]) -> str:
 
     没抽到公司代码时原样返回：此时过滤器兜不住，公司名还得留着。
     """
-    if not codes:
-        return question
     from app.graph.nodes.query import available_corpus, unambiguous_aliases
 
     corpus = await available_corpus()
+    report_years = [y for code, _n, y in corpus if not codes or code in codes]
+    hint = f" {SUMMARY_TABLE_HINT}" if needs_summary_table(years or [], report_years) else ""
+    if not codes:
+        return question + hint
     # 只剥唯一别名。通名型别名（银行 / 医药 / 电力）剥掉的是查询里
     # 最有信息量的词——问招行的「银行业务收入」会被剥成「业务收入」
     names = {alias for alias, owner in unambiguous_aliases(corpus).items() if owner in codes}
@@ -127,7 +146,7 @@ async def keyword_query_of(question: str, codes: list[str]) -> str:
     for word in _FILLER:
         out = out.replace(word, " ")
     out = " ".join(out.split())
-    return out or question
+    return (out or question) + hint
 
 
 async def retrieve_node(state: GraphState) -> GraphState:
@@ -155,7 +174,7 @@ async def retrieve_node(state: GraphState) -> GraphState:
         logger.info("第 %d 次重试：放宽过滤条件至 %s", retry, filters)
 
     query = state.get("rewritten") or state["question"]
-    keyword_query = await keyword_query_of(query, filters.company_codes)
+    keyword_query = await keyword_query_of(query, filters.company_codes, raw.get("years") or [])
     if keyword_query != query:
         logger.debug("关键词查询去噪：%s → %s", query, keyword_query)
 

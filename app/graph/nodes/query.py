@@ -40,7 +40,16 @@ class QueryAnalysis(BaseModel):
     """查询分析结果。"""
 
     rewritten: str = Field(description="指代消解后的完整问题，若无需改写则原样返回")
-    company_codes: list[str] = Field(default_factory=list, description="涉及的股票代码，六位数字")
+    # 让模型输出**公司名**而不是股票代码。模型抄名字很准，抄六位数字很不准：
+    # 语料扩到 12 家后，实测「贵州茅台的股票代码是多少」被抽成 600900
+    # （长江电力），茅台的题全在长江电力的年报里检索，整类题塌掉。
+    # 名字→代码的映射是确定性的，交给程序做。
+    companies: list[str] = Field(
+        default_factory=list, description="问题涉及的公司名，必须逐字抄自「可用语料」列表"
+    )
+    company_codes: list[str] = Field(
+        default_factory=list, description="若问题里直接写了六位股票代码就填，否则留空"
+    )
     years: list[int] = Field(default_factory=list, description="涉及的报告年度")
     statement_type: Literal["balance", "income", "cashflow", "equity"] | None = Field(
         None, description="明确指向某张报表时填写，否则留空"
@@ -52,8 +61,10 @@ class QueryAnalysis(BaseModel):
 _SYSTEM = """你是财报问答系统的查询分析器。根据对话历史与可用语料，完成三件事：
 
 1. 指代消解：把「它」「该公司」「这一年」等代词还原为具体实体，输出完整问题。
-2. 实体抽取：识别问题涉及的股票代码与报告年度。只能从「可用语料」中选择，
-   语料里没有的公司不要臆造代码。
+2. 实体抽取：识别问题涉及的**公司名**与报告年度。
+   公司名必须逐字抄自下面「可用语料」里的名字，不要改写、不要翻译、
+   不要自己推断股票代码——代码由系统查表得到。
+   语料里没有的公司，companies 留空（后续会据此拒答）。
 3. 路由判定：
    - chat  ：**仅限**寒暄与询问系统自身能力（「你好」「你能做什么」）。
              任何针对某家具体公司的提问都不是 chat，哪怕它不是财务数据——
@@ -151,6 +162,44 @@ def unambiguous_aliases(corpus: list[tuple[str, str, int]]) -> dict[str, str]:
     return {alias: next(iter(codes)) for alias, codes in owners.items() if len(codes) == 1}
 
 
+def resolve_companies(
+    analysis: QueryAnalysis, corpus: list[tuple[str, str, int]], question: str = ""
+) -> list[str]:
+    """把模型给出的公司名解析成股票代码。
+
+    为什么不直接让模型输出代码：模型抄名字很准，抄六位数字很不准。
+    语料扩到 12 家后实测「贵州茅台的股票代码是多少」被抽成 600900
+    （长江电力），该公司全部题目在别家的年报里检索，整类题塌掉——
+    而日志里只看到「检索不到」，看不出是认错了公司。
+
+    名字→代码是确定性映射，程序做不会错。模型直接写了六位代码的
+    （用户原话里就有代码）仍然采信，但必须在语料内。
+    """
+    known = {code for code, _n, _y in corpus}
+    aliases = unambiguous_aliases(corpus)
+    # 只采信**用户原话里真的出现过**的代码。模型即使被告知不要推断代码，
+    # 仍会往这个字段里填一个，而填错的概率不低——实测问茅台时它填 600900。
+    # 问句里没有的代码一律当作猜测丢弃。
+    asked = set(CODE_PAT.findall(question))
+    codes = {c for c in analysis.company_codes if c in known and c in asked}
+    for name in analysis.companies:
+        name = (name or "").strip()
+        if not name:
+            continue
+        if name in known:  # 模型把代码填进了名字字段
+            codes.add(name)
+            continue
+        if hit := aliases.get(name):
+            codes.add(hit)
+            continue
+        # 名字没精确命中时退一步做包含匹配：模型可能写了全称或少写一个字
+        for alias, code in aliases.items():
+            if alias in name or name in alias:
+                codes.add(code)
+                break
+    return sorted(codes)
+
+
 def fallback_analysis(question: str, corpus: list[tuple[str, str, int]]) -> QueryAnalysis:
     """规则兜底：LLM 不可用时也要能检索。
 
@@ -221,19 +270,21 @@ async def analyze_query(state: GraphState, config: RunnableConfig) -> GraphState
         route = exp.router.fallback_branch
 
     merged = merge_usage(state.get("usage"), usage)
+    codes = resolve_companies(analysis, corpus, question)
 
     logger.info(
-        "查询分析：route=%s conf=%.2f codes=%s years=%s",
+        "查询分析：route=%s conf=%.2f companies=%s codes=%s years=%s",
         route,
         analysis.confidence,
-        analysis.company_codes,
+        analysis.companies,
+        codes,
         analysis.years,
     )
     return {
         "rewritten": analysis.rewritten,
         "route": route,
         "filters": {
-            "company_codes": analysis.company_codes,
+            "company_codes": codes,
             "years": analysis.years,
             "statement_type": analysis.statement_type,
         },

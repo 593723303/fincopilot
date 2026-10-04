@@ -13,6 +13,7 @@ from app.graph.nodes.query import (
     QueryAnalysis,
     company_aliases,
     fallback_analysis,
+    resolve_companies,
     unambiguous_aliases,
 )
 from app.rag.retrievers import QueryFilters, RetrievedChunk, build_expr, max_score
@@ -224,11 +225,19 @@ async def test_keyword_query_strips_company_and_filler(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_keyword_query_kept_intact_without_company_code():
-    """没抽到公司代码时过滤器兜不住，公司名必须留着。"""
+async def test_keyword_query_kept_intact_without_company_code(monkeypatch):
+    """没抽到公司代码时过滤器兜不住，公司名必须留着。
+
+    注意这里仍要桩掉语料：为了判断「该年份是否只能从汇总表取数」，
+    现在即使没有公司代码也会读一次语料清单。
+    """
     from app.graph.nodes import rag as rag_mod
 
-    q = "贵州茅台2023年营业收入是多少？"
+    async def fake_corpus():
+        return [("600519", "贵州茅台", 2025)]
+
+    monkeypatch.setattr("app.graph.nodes.query.available_corpus", fake_corpus)
+    q = "贵州茅台2024年营业收入是多少？"
     assert await rag_mod.keyword_query_of(q, []) == q
 
 
@@ -306,3 +315,74 @@ def test_ambiguous_alias_is_dropped():
     """同一别名指向两家公司时，用它认公司必然有一半是错的。"""
     corpus = [("000001", "平安银行", 2025), ("601318", "中国平安", 2025)]
     assert "平安" not in unambiguous_aliases(corpus)
+
+
+# ── 公司解析：模型不该负责抄六位代码 ──────────────────────
+
+
+def _analysis(**kw) -> QueryAnalysis:
+    base = dict(
+        rewritten="q",
+        companies=[],
+        company_codes=[],
+        years=[],
+        statement_type=None,
+        route="rag",
+        confidence=0.9,
+    )
+    base.update(kw)
+    return QueryAnalysis(**base)
+
+
+def test_company_name_resolves_to_code():
+    """模型输出公司名，代码由程序查表——名字好抄，代码不好抄。"""
+    got = resolve_companies(_analysis(companies=["贵州茅台"]), CORPUS_12, "贵州茅台的营业收入")
+    assert got == ["600519"]
+
+
+def test_model_guessed_code_is_discarded():
+    """问句里没出现过的代码一律当猜测丢弃。
+
+    实测语料扩到 12 家后，问贵州茅台时模型把 company_codes 填成 600900
+    （长江电力），茅台全部题目在别家年报里检索，整类题塌掉；
+    而日志只显示「检索不到」，看不出是认错了公司。
+    """
+    a = _analysis(companies=["贵州茅台"], company_codes=["600900"])
+    assert resolve_companies(a, CORPUS_12, "贵州茅台的营业收入") == ["600519"]
+
+
+def test_code_written_by_the_user_is_trusted():
+    """用户原话里就有代码时仍然采信。"""
+    a = _analysis(company_codes=["600519"])
+    assert resolve_companies(a, CORPUS_12, "600519的净利润是多少？") == ["600519"]
+
+
+def test_unknown_company_resolves_to_nothing():
+    """语料外的公司解析为空，后续据此拒答，而不是硬塞一家。"""
+    a = _analysis(companies=["五粮液"])
+    assert resolve_companies(a, CORPUS_12, "五粮液2025年营业收入") == []
+
+
+# ── 更早年度只能从汇总表取数 ──────────────────────────────
+
+
+def test_summary_hint_for_year_beyond_statements():
+    """三大报表只有本期/上期两列，2023 年的数只在「近三年主要会计数据」里。"""
+    from app.graph.nodes.rag import needs_summary_table
+
+    assert needs_summary_table([2023], [2025]) is True
+
+
+@pytest.mark.parametrize("year", [2024, 2025])
+def test_no_summary_hint_for_current_or_prior_year(year):
+    """本期与上期在三大报表里就有，不必把查询往汇总表上引。"""
+    from app.graph.nodes.rag import needs_summary_table
+
+    assert needs_summary_table([year], [2025]) is False
+
+
+def test_summary_hint_needs_both_sides():
+    from app.graph.nodes.rag import needs_summary_table
+
+    assert needs_summary_table([], [2025]) is False
+    assert needs_summary_table([2023], []) is False

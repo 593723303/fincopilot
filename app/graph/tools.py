@@ -24,6 +24,7 @@ import re
 from langchain_core.tools import tool
 
 from app.config.experiment import Experiment
+from app.graph.nodes.rag import SUMMARY_TABLE_HINT, needs_summary_table
 from app.rag.retrievers import QueryFilters, expand_parents, rerank, retrieve
 from app.store.milvus import milvus
 
@@ -165,6 +166,11 @@ def build_tools(
         # 实测：查「营业收入」p6 摘要表一次都进不了前 6，
         # 查「2023年营业收入」它就是第一名。
         search_text = f"{year}年{query}" if year else query
+        # 比报告年度早两年及以上的数据只存在于「近三年主要会计数据」汇总表，
+        # 三大报表只有本期/上期两列（与 rag 分支同一条理由）
+        report_years = [y for c, _n, y in corpus if c == code]
+        if needs_summary_table([year] if year else [], report_years):
+            search_text = f"{search_text} {SUMMARY_TABLE_HINT}"
         chunks = await retrieve(
             milvus(),
             search_text,
