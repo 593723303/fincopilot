@@ -15,7 +15,9 @@ import pytest
 from app.rag.pdf_parser import (
     PROSE_UNIT_PAT,
     STATEMENT_SCOPE,
+    HeadingTracker,
     TableContext,
+    count_merged_cells,
     inline_unit,
     is_numeric_table,
     looks_tabular,
@@ -23,6 +25,7 @@ from app.rag.pdf_parser import (
     parse_pdf,
     render_table,
     scale_to_yuan,
+    year_label_count,
 )
 
 RAW_DIR = Path(__file__).resolve().parents[1] / "data" / "raw"
@@ -308,3 +311,57 @@ def test_no_breakdown_when_a_year_spans_two_columns():
         ["短期借款", "43,904,550", "10,000,000", "31,008,549"],
     ]
     assert "【按年份】" not in render_table(rows, TableContext(unit="千元"), "x")
+
+
+# ── 无边框表格的坐标重建（P1-5 / P1-8） ──────────────────
+
+
+def test_merged_cell_count_ignores_long_single_numbers():
+    """一个长数字不是两个数。
+
+    早先的正则「两个千分位数之间夹任意字符」会因回溯把
+    349,079,082,852 拆成 349,079 与 082,852，于是位数够多的正常数字
+    全被判成粘连，紫金矿业的坐标重建因此一直被拒绝。
+    """
+    assert count_merged_cells([["349,079,082,852"]]) == 0
+    assert count_merged_cells([["168,838,102,514.79"]]) == 0
+
+
+def test_merged_cell_count_catches_real_merges():
+    """中间夹着小数的真粘连要认出来。"""
+    assert count_merged_cells([["303,639,957,153 14.96 293,403,242,878"]]) == 1
+    assert count_merged_cells([["337,488 0.01 339,123"]]) == 1
+
+
+def test_merged_cell_count_can_skip_the_catch_all_column():
+    """重建表的第 0 列是兜底列，会收走带数字的正文行，不该计入。"""
+    rows = [["正文 1,234 和 5,678", "100,000"]]
+    assert count_merged_cells(rows) == 1
+    assert count_merged_cells(rows, skip_first_col=True) == 0
+
+
+def test_year_label_count_takes_max_per_row_not_total():
+    """按行取最大，不能把几行的年份标签加总。
+
+    坐标重建按 y 切行，会把「2025年」「2024年」「2023年」拆到不同行——
+    总数没变，表头却已经不可用。实测中国建筑就是这样被毁掉的。
+    """
+    intact = [["主要会计数据", "2025年", "2024年", "2023年"]]
+    broken = [["本期比上年", "2024年"], ["2025年"], ["2023年"]]
+    assert year_label_count(intact) == 3
+    assert year_label_count(broken) == 1
+
+
+def test_decimal_section_numbering_is_recognized():
+    """招商银行用「第二章」与「2.1」编号，只认「第X节」会让整篇没有标题路径。"""
+    t = HeadingTracker()
+    assert t.feed("第二章 会计数据和财务指标摘要") is True
+    assert t.feed("2.1 本集团主要会计数据和财务指标") is True
+    assert "2.1" in t.path()
+
+
+def test_bare_decimal_is_not_a_heading():
+    """孤立的「2.1」不是标题，后面必须跟实义文字。"""
+    t = HeadingTracker()
+    assert t.feed("2.1") is False
+    assert t.feed("1.23") is False

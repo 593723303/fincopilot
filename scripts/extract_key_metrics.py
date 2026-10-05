@@ -100,6 +100,31 @@ def header_years(line: str) -> tuple[int, dict[int, int]] | None:
     return len(value_cells), years
 
 
+# 年份列里放的是千分位大数，增减率列放的是不带逗号的小数
+GROUPED = re.compile(r"^-?\d{1,3}(?:,\d{3})+(?:\.\d+)?$")
+
+
+def align_by_shape(
+    cells: list[str], cols: dict[int, int]
+) -> tuple[dict[int, int], list[str]] | None:
+    """列数对不上时，按数值形态再对齐一次。
+
+    紫金矿业的表头把「本期比上年同期增减(%)」并进了首格，于是表头只数出
+    3 个年份列，而数据行有 4 个值——按列数判定会整行丢弃。
+
+    但两类值的形态截然不同：年份列是 349,079,082,852 这样的千分位大数，
+    增减率列是 14.96 这样不带逗号的小数。只要千分位数的个数恰好等于
+    年份列的个数，就能按顺序一一对上，不需要知道增减列夹在第几位。
+
+    对不上就返回 None——宁可不出题，不能对错年份。
+    """
+    grouped = [c for c in cells if GROUPED.match(c.replace(" ", ""))]
+    if len(grouped) != len(cols) or not grouped:
+        return None
+    years_in_order = [cols[i] for i in sorted(cols)]
+    return {i: y for i, y in enumerate(years_in_order)}, grouped
+
+
 def corroborate(doc_pdf: pymupdf.Document, page_start: int, raw: str, page_end: int = 0) -> bool:
     """用**原始页面文本**核对这个数字确实印在这张表覆盖的页上。
 
@@ -131,7 +156,10 @@ def corroborate(doc_pdf: pymupdf.Document, page_start: int, raw: str, page_end: 
 def extract(doc: ParsedDocument, doc_pdf: pymupdf.Document) -> list[dict]:
     rows: list[dict] = []
     for blk in doc.blocks:
-        if blk.kind != "table" or not SUMMARY_HEADING.search(blk.heading_path or ""):
+        # caption 也要认：紫金矿业的摘要表标题「近三年主要会计数据」
+        # 是表上方的一行文字，没被识别成章节标题，只落在 caption 里
+        where = f"{blk.heading_path or ''} {blk.caption or ''}"
+        if blk.kind != "table" or not SUMMARY_HEADING.search(where):
             continue
         lines = [ln for ln in blk.text.splitlines() if ln.startswith("|")]
         if len(lines) < 3:
@@ -157,13 +185,16 @@ def extract(doc: ParsedDocument, doc_pdf: pymupdf.Document) -> list[dict]:
             # 没有子列头却列数不符，说明是别的原因（科目名跨行折断、
             # 合并单元格错位），那就整行弃用——猜错了也看不出来。
             if len(cells) == n_values:
-                take = cols
+                take = {i: y for i, y in cols.items()}
+                values = cells
+            elif (aligned := align_by_shape(cells, cols)) is not None:
+                take, values = aligned
             elif restated and 0 in cols:
-                take = {0: cols[0]}
+                take, values = {0: cols[0]}, cells
             else:
                 continue
             for idx, year in take.items():
-                raw = cells[idx]
+                raw = values[idx]
                 if not NUMBER.fullmatch(raw.replace(" ", "")):
                     continue
                 rows.append(

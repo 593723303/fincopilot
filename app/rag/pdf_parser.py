@@ -49,7 +49,13 @@ PROSE_UNIT_PAT = re.compile(
 )
 # 判断单元格是否为数值：含千分位、小数、负号或括号负数
 NUMERIC_CELL = re.compile(r"^[-－(（]?[\d,，]+(\.\d+)?[)）%]?$")
-SECTION_PAT = re.compile(r"^第[一二三四五六七八九十]{1,3}节\s*(.+)$")
+# 「第X节」是上交所主板的写法。A+H 公司多用「第X章」，
+# 招商银行还用「2.1 本集团主要会计数据」这种小数编号——
+# 只认「第X节」会让这类年报的 heading_path 整篇为空，
+# 于是按标题筛表的逻辑（如「主要会计数据」）一张也筛不出来。
+SECTION_PAT = re.compile(r"^第[一二三四五六七八九十]{1,3}[节章]\s*(.+)$")
+# 2.1 / 2.1.1 式编号，后面必须跟实义文字，避免把「2.1」这样的孤立数字当标题
+DECIMAL_SEC_PAT = re.compile(r"^(\d{1,2}(?:\.\d{1,2}){1,2})\s+(\S.{2,38})$")
 SUBSEC_PAT = re.compile(r"^([一二三四五六七八九十]{1,3})[、．]\s*(.+)$")
 ITEM_PAT = re.compile(r"^[（(]([一二三四五六七八九十]{1,3})[）)]\s*(.+)$")
 # 目录页特征：标题后跟一长串点号与页码
@@ -156,6 +162,14 @@ class HeadingTracker:
             return True
         if ITEM_PAT.match(line):
             self.item = line[:40]
+            return True
+        if m := DECIMAL_SEC_PAT.match(line):
+            # 2.1 视作次级标题，2.1.1 视作三级
+            if m.group(1).count(".") == 1:
+                self.subsection = line[:40]
+                self.item = None
+            else:
+                self.item = line[:40]
             return True
         return False
 
@@ -420,6 +434,137 @@ def year_breakdown(header: list[str], body: list[list[str]]) -> list[str]:
     return [""] + out if out else []
 
 
+# ── 无边框表格的坐标重建 ────────────────────────────────
+
+# 判断单元格粘连：数一数里面有几个千分位数字，两个以上就是没切开。
+#
+# 不要写成「两个数字之间夹着任意字符」那种正则——它会因回溯把**单个**长数字
+# 拆成两个（349,079,082,852 可以拆成 349,079 与 082,852），
+# 于是位数够多的正常数字全被判成粘连，紫金矿业的坐标重建因此一直被拒绝；
+# 而加了「中间必须是非数字」的限制后，又会漏掉中间夹着小数的真粘连
+# （303,639,957,153 14.96 293,403,242,878）。
+# 贪婪地把每个千分位数字整体匹配出来再计数，两种情况都对。
+# 行内的 y 容差与列内的 x 容差（pt）
+ROW_TOL = 4.0
+X_TOL = 3.0
+# 一个 x 位置上至少要有这么多个数字，才算一个真正的数值列
+MIN_COL_HITS = 3
+NUMERIC_WORD = re.compile(r"^[-(（]?\d[\d,]*\.?\d*[)）%]?$")
+
+
+def count_merged_cells(rows: list[list[str]], skip_first_col: bool = False) -> int:
+    """数一数有多少个单元格发生了粘连。
+
+    skip_first_col 用于坐标重建的产物：它的第 0 列是兜底列，
+    收走所有不属于任何数值列的文字（包括带多个数字的正文行），
+    按粘连计数天然吃亏，会把一张已经切得很好的表判成「更差」。
+    """
+    return sum(
+        1
+        for row in rows
+        for cell in (row[1:] if skip_first_col else row)
+        if cell and len(GROUPED_NUMBER.findall(normalize_cell(cell))) >= 2
+    )
+
+
+YEAR_LABEL = re.compile(r"20\d{2}\s*年")
+
+
+def year_label_count(rows: list[list[str]]) -> int:
+    """**单行内**最多有几个年份标签——用来判断列头有没有被打散。
+
+    必须按行取最大值，不能把前几行的标签加总：坐标重建是按 y 切行的，
+    遇到竖排或错位的列头会把「2025年」「2024年」「2023年」拆到不同行，
+    总数没变、列头却已经不可用了。实测中国建筑就是这样——
+    总数都是 3，而重建后的表头行只剩「2024年」一个。
+    """
+    return max(
+        (sum(len(YEAR_LABEL.findall(normalize_cell(c))) for c in row) for row in rows[:3]),
+        default=0,
+    )
+
+
+def count_numeric_cells(rows: list[list[str]]) -> int:
+    """单独成格的数值有多少个——直接衡量「数字有没有被分开」。"""
+    return sum(
+        1
+        for row in rows
+        for cell in row
+        if cell and NUMERIC_CELL.match(normalize_cell(cell).replace(" ", ""))
+    )
+
+
+def has_merged_cells(rows: list[list[str]]) -> bool:
+    return count_merged_cells(rows) > 0
+
+
+def numeric_columns(words) -> list[tuple[float, float]]:
+    """数值列的 (左界, 右界)，按**右边界**聚类。
+
+    必须按右边界而不是左边界：表格里的数字是右对齐的，
+    同一列中位数不同的数字左边界相差很大
+    （紫金矿业的 349,079,082,852 与 80,752,523,141 差了一位），
+    右边界却严格相同。按左边界聚类会把同一列拆成两列，
+    于是同一科目的本年数有时落在第 1 列、有时落在第 2 列。
+
+    只用数值词定列：正文的坐标散乱，还会横跨好几列把列间空隙填平。
+    """
+    nums = [w for w in words if NUMERIC_WORD.match(w[4])]
+    if not nums:
+        return []
+    nums.sort(key=lambda w: w[2])
+    groups: list[list] = [[nums[0]]]
+    for w in nums[1:]:
+        if w[2] - groups[-1][-1][2] <= X_TOL:
+            groups[-1].append(w)
+        else:
+            groups.append([w])
+    return [
+        (min(w[0] for w in g), max(w[2] for w in g))
+        for g in groups
+        if len(g) >= MIN_COL_HITS
+    ]
+
+
+def rebuild_table_by_words(page: pymupdf.Page, bbox) -> list[list[str]]:
+    """从词坐标重建表格。切不开就返回空，由调用方保留原结果。
+
+    只在 find_tables 把整列塞进一个单元格时才调用——
+    银行与 A+H 公司的年报大量使用无边框表格，pymupdf 的划线检测
+    和文本策略都切不开，但 PDF 里的词坐标本身是整齐的。
+    """
+    words = page.get_text("words", clip=pymupdf.Rect(bbox))
+    cols = numeric_columns(words)
+    if len(cols) < 2:
+        return []
+
+    def col_of(w) -> int:
+        """词落在哪一列。落不进任何数值列的归到第 0 列（标签列）。"""
+        center = (w[0] + w[2]) / 2
+        for i, (left, right) in enumerate(cols, start=1):
+            if left - X_TOL <= center <= right + X_TOL:
+                return i
+        return 0
+
+    words = sorted(words, key=lambda w: (round(w[1], 1), w[0]))
+    lines: list[list] = []
+    for w in words:
+        if lines and abs(w[1] - lines[-1][0][1]) <= ROW_TOL:
+            lines[-1].append(w)
+        else:
+            lines.append([w])
+
+    out: list[list[str]] = []
+    for ln in lines:
+        cells = [""] * (len(cols) + 1)
+        for w in sorted(ln, key=lambda w: w[0]):
+            i = col_of(w)
+            cells[i] = (cells[i] + " " + w[4]).strip()
+        if any(c.strip() for c in cells):
+            out.append(cells)
+    return out
+
+
 def render_table(rows: list[list[str]], ctx: TableContext, heading: str) -> str:
     """把表格渲染为带量纲声明的 Markdown。
 
@@ -512,6 +657,34 @@ def parse_pdf(path: str | Path, max_pages: int | None = None) -> ParsedDocument:
         for t in raw_tables:
             try:
                 rows = t.extract()
+                # 整列被塞进一个单元格时，改用词坐标重建。
+                # 只在确实粘连时启用，正常的表一律走原路径。
+                merged_before = count_merged_cells(rows)
+                if merged_before:
+                    rebuilt = rebuild_table_by_words(page, t.bbox)
+                    # 判据直接衡量目的：**数字有没有被分进各自的单元格**。
+                    # 先后试过两种更直觉的判据，都不行：
+                    #   「重建后必须零粘连」——一行没切开就丢掉整张好表
+                    #   「重建后粘连更少」——重建表的兜底列会收走带数字的正文行，
+                    #                       计数天然吃亏，紫金矿业因此被判成更差
+                    # 还要守住列头：重建是按坐标切的，遇到跨列的长标题会把
+                    # 「2025年」这类标签挤进别的格子甚至丢掉。实测中国建筑的
+                    # 摘要表原本有 2025/2024/2023 三个年份列，重建后只剩 2024，
+                    # 数据切得再干净也没用——年份对不上就不能出题。
+                    better = (
+                        rebuilt
+                        and count_numeric_cells(rebuilt) > count_numeric_cells(rows)
+                        and count_merged_cells(rebuilt, skip_first_col=True) < merged_before
+                        and year_label_count(rebuilt) >= year_label_count(rows)
+                    )
+                    if better:
+                        logger.debug(
+                            "第 %d 页表格单元格粘连，按坐标重建（%d 行 × %d 列）",
+                            i + 1,
+                            len(rebuilt),
+                            len(rebuilt[0]),
+                        )
+                        rows = rebuilt
             except Exception:
                 continue
             if not rows or len(rows) < 2:
