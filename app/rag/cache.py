@@ -194,8 +194,10 @@ async def put_semantic(
                 }
             ],
         )
-        # upsert 之后不 flush，新写的条目对随后的 search 不可见。
-        # 表现是「刚问过的同义问题仍然没命中」，很容易被误判成阈值太高。
-        client.flush(_cache_collection())
+        # 这里刻意不 flush。Milvus 的 flush 是重操作，逐条调用会把
+        # 每次问答都拖慢一截——实测开了之后一轮 182 题的评估慢了数倍。
+        # 代价是新写的条目要过几秒才可搜索，对缓存来说完全可以接受：
+        # 缓存本来就是「慢慢变热」的东西，而不是写完立刻要读到。
+        # （排查时注意：刚写就查确实查不到，别误判成阈值太高。）
     except Exception as exc:
         logger.warning("语义缓存写入失败：%s", exc)

@@ -350,9 +350,23 @@ async def main() -> int:
         help="只跑指定类别（table/multihop/fact/refuse）。仅用于定向调试，结果不得与全量运行比较",
     )
     parser.add_argument("--note", type=str, default=None)
+    parser.add_argument(
+        "--with-cache",
+        action="store_true",
+        help="评估时开启缓存。默认关闭——开着会命中上一版代码写入的答案，"
+        "测的就不再是系统本身",
+    )
     args = parser.parse_args()
 
     exp = load_experiment(args.exp)
+    # 评估一律关缓存。开着会出两个问题：
+    #   1. 命中的是**上一版代码**写入的答案，于是评估测的是缓存不是系统，
+    #      改了代码却看不出回归——exp_id 相同时这一点尤其隐蔽
+    #   2. 每题多一次 embedding 写入，拖慢整轮
+    # 想单独量缓存效果时用 --with-cache。
+    if not args.with_cache:
+        exp.cache.exact = False
+        exp.cache.semantic = False
     await init_pg()
     await init_milvus()
 
