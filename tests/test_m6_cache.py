@@ -58,3 +58,26 @@ def test_exact_key_is_scoped_by_experiment(exp_id):
     k = exact_key("贵州茅台2025年营业收入", exp_id, "c=600519|y=2025|m=营业收入")
     other = exact_key("贵州茅台2025年营业收入", "exp99", "c=600519|y=2025|m=营业收入")
     assert k != other
+
+
+# ── 会话历史（多轮指代消解的前提） ──────────────────────
+
+
+@pytest.mark.asyncio
+async def test_guard_in_records_the_user_question():
+    """用户的提问必须进会话历史。
+
+    各节点只往 messages 里追加 AIMessage，谁都没追加用户那一句——
+    于是多轮里 state["messages"] 全是助手自己说过的话，
+    「它去年的呢」找不到上文的公司，resolve_companies 的
+    「用户是否真的提过这家公司」也永远校验不到。
+    """
+    from langchain_core.messages import HumanMessage
+
+    from app.graph.build import guard_in
+
+    out = await guard_in({"question": "  贵州茅台2025年营业收入是多少？  "})
+    msgs = out["messages"]
+    assert len(msgs) == 1
+    assert isinstance(msgs[0], HumanMessage)
+    assert msgs[0].content == "贵州茅台2025年营业收入是多少？"

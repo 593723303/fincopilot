@@ -16,8 +16,10 @@ from __future__ import annotations
 
 import logging
 
+from langchain_core.messages import HumanMessage
 from langgraph.graph import END, START, StateGraph
 
+from app.graph.checkpoint import checkpointer
 from app.graph.nodes.agent import agent_node
 from app.graph.nodes.query import analyze_query
 from app.graph.nodes.rag import (
@@ -37,7 +39,14 @@ MAX_QUESTION_LEN = 500
 
 
 async def guard_in(state: GraphState) -> GraphState:
-    """入口护栏。限流在 API 层做，这里只校验内容本身。"""
+    """入口护栏。限流在 API 层做，这里只校验内容本身。
+
+    顺带把用户这轮的提问写进会话历史。各节点只往 messages 里追加
+    AIMessage，谁都没有追加用户的那一句——于是多轮里
+    `state["messages"]` 全是助手自己说过的话，
+    「它去年的呢」既找不到上文的公司，`resolve_companies` 的
+    「用户是否真的提过这家公司」也永远校验不到。
+    """
     question = (state.get("question") or "").strip()
     if not question:
         return {"refused": True, "refuse_reason": "empty_question", "answer": "请输入问题。"}
@@ -47,7 +56,7 @@ async def guard_in(state: GraphState) -> GraphState:
             "refuse_reason": "question_too_long",
             "answer": f"问题过长，请控制在 {MAX_QUESTION_LEN} 字以内。",
         }
-    return {"question": question}
+    return {"question": question, "messages": [HumanMessage(content=question)]}
 
 
 def branch_after_analyze(state: GraphState) -> str:
@@ -115,16 +124,25 @@ def build_graph():
     graph.add_edge("verify", "cache_store")
     graph.add_edge("cache_store", END)
 
-    return graph.compile()
+    return graph
 
 
 _compiled = None
 
 
 def get_graph():
-    """编译一次复用。M5 接入 Checkpointer 后需改为按会话传入。"""
+    """编译一次复用。
+
+    带 checkpointer 编译：多轮对话的指代消解与 HITL 恢复都依赖它。
+    checkpointer 未初始化时（评估脚本、单元测试）照常编译，
+    只是不落盘——这两种场景本来就是单轮的。
+    """
     global _compiled
     if _compiled is None:
-        _compiled = build_graph()
-        logger.info("LangGraph 主图已编译（M2：chat / rag 双分支）")
+        saver = checkpointer()
+        _compiled = build_graph().compile(checkpointer=saver) if saver else build_graph().compile()
+        logger.info(
+            "LangGraph 主图已编译（checkpointer=%s）",
+            type(saver).__name__ if saver else "无",
+        )
     return _compiled

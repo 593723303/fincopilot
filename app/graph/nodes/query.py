@@ -270,7 +270,9 @@ async def analyze_query(state: GraphState, config: RunnableConfig) -> GraphState
 
     exp = experiment_of(state)
     profile = exp.router.profile
-    history = state.get("messages") or []
+    # guard_in 已经把本轮提问追加进 messages，这里要去掉最后一条，
+    # 否则同一个问题会在提示词里出现两次
+    history = (state.get("messages") or [])[:-1]
 
     try:
         llm = get_chat(profile).with_structured_output(QueryAnalysis, include_raw=True)
