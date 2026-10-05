@@ -107,6 +107,40 @@ services:
 # 命名卷 —— 不用绑定挂载到 Windows 目录。
 # Podman rootless 运行在 WSL 中时，容器内用户对 Windows 文件系统没有写权限，
 # 绑定挂载会导致数据库容器启动失败。命名卷由容器引擎在 Linux 侧管理，无此问题。
+  # ── 应用 ────────────────────────────────────────────────
+  # 同一镜像三种角色，靠启动命令区分（架构 §4.2）
+  api:
+    build: .
+    depends_on: [postgres, redis, milvus]
+    environment:
+      POSTGRES_DSN: postgresql+asyncpg://fincopilot:fincopilot@postgres:5432/fincopilot
+      REDIS_URL: redis://redis:6379/0
+      MILVUS_URI: http://milvus:19530
+      DASHSCOPE_API_KEY: ${DASHSCOPE_API_KEY:-}
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+    ports: ["8000:8000"]
+    restart: unless-stopped
+
+  worker:
+    build: .
+    depends_on: [postgres, redis, milvus]
+    environment:
+      POSTGRES_DSN: postgresql+asyncpg://fincopilot:fincopilot@postgres:5432/fincopilot
+      REDIS_URL: redis://redis:6379/0
+      MILVUS_URI: http://milvus:19530
+      DASHSCOPE_API_KEY: ${DASHSCOPE_API_KEY:-}
+    command: ["arq", "app.worker.Settings"]
+    restart: unless-stopped
+
+  ui:
+    build: .
+    depends_on: [api]
+    environment:
+      FINCOPILOT_API: http://api:8000
+    command: ["chainlit", "run", "frontend/app.py", "--host", "0.0.0.0", "--port", "8001"]
+    ports: ["8001:8001"]
+    restart: unless-stopped
+
 volumes:
   pgdata:
   redisdata:
