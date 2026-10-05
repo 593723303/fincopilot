@@ -29,8 +29,7 @@ from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DRAFT = PROJECT_ROOT / "tmp" / "key_metrics.json"
-V1 = PROJECT_ROOT / "eval" / "datasets" / "v1.jsonl"
-OUT = PROJECT_ROOT / "eval" / "datasets" / "v2.jsonl"
+DATASETS = PROJECT_ROOT / "eval" / "datasets"
 
 SEED = 42
 
@@ -202,6 +201,18 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--sample", type=int, default=0, help="只抽样打印 N 条供人工核对，不写文件")
     ap.add_argument("--per-company", type=int, default=12, help="每家公司最多出多少道表格题")
+    ap.add_argument("--out", default="v2", help="输出到 eval/datasets/<name>.jsonl")
+    ap.add_argument(
+        "--merge",
+        default="v1",
+        help="把该评估集的题目并进来；留出集必须传 none",
+    )
+    ap.add_argument(
+        "--only",
+        nargs="*",
+        default=None,
+        help="只用这些股票代码出题。建留出集时用它把开发期间用过的公司排除干净",
+    )
     args = ap.parse_args()
 
     rng = random.Random(SEED)
@@ -211,6 +222,8 @@ def main() -> int:
     items: list[dict] = []
     stats: list[tuple[str, int, int, int]] = []
     for code, rows in sorted(draft.items()):
+        if args.only and code not in args.only:
+            continue
         name = names.get(code, code)
         keep = usable(rows)
         if not keep:
@@ -229,10 +242,15 @@ def main() -> int:
 
     items.extend(refuse_items(set(names.values())))
 
-    # v1 原样并入：人工核验过的题目不该丢
-    v1 = [json.loads(line) for line in V1.read_text(encoding="utf-8").splitlines() if line.strip()]
-    seen = {it["question"] for it in items}
-    merged = items + [it for it in v1 if it["question"] not in seen]
+    # 并入已有评估集。**留出集必须传 --merge none**：
+    # 混进开发期间看过的题，它就不再是留出集了。
+    merged = items
+    if args.merge and args.merge != "none":
+        src = DATASETS / f"{args.merge}.jsonl"
+        raw = src.read_text(encoding="utf-8").splitlines()
+        old = [json.loads(ln) for ln in raw if ln.strip()]
+        seen = {it["question"] for it in items}
+        merged = items + [it for it in old if it["question"] not in seen]
 
     print(f"{'公司':<18}{'表格题':>8}{'多跳题':>8}{'口径题':>8}")
     for label, n_tab, n_multi, n_scope in stats:
@@ -240,7 +258,9 @@ def main() -> int:
     by_cat: dict[str, int] = defaultdict(int)
     for it in merged:
         by_cat[it["category"]] += 1
-    print(f"\n合计 {len(merged)} 题（v1 带入 {len(merged) - len(items)} 题）：{dict(by_cat)}")
+    carried = len(merged) - len(items)
+    note = f"（从 {args.merge} 带入 {carried} 题）" if carried else "（未并入已有题目）"
+    print(f"\n合计 {len(merged)} 题{note}：{dict(by_cat)}")
 
     if args.sample:
         print(f"\n── 随机抽样 {args.sample} 条，逐条核对页码与口径 ──")
@@ -250,10 +270,10 @@ def main() -> int:
             print(f"   依据 {it['note'][:150]}")
         return 0
 
-    OUT.write_text(
-        "\n".join(json.dumps(it, ensure_ascii=False) for it in merged) + "\n", encoding="utf-8"
-    )
-    print(f"\n写入 {OUT}")
+    out_path = DATASETS / f"{args.out}.jsonl"
+    body = "\n".join(json.dumps(it, ensure_ascii=False) for it in merged)
+    out_path.write_text(body + "\n", encoding="utf-8")
+    print(f"\n写入 {out_path}")
     return 0
 
 

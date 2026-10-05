@@ -99,3 +99,36 @@ def test_corroborate_ignores_thousand_separators():
     """原文可能不带千分位，不能因为写法不同就判成对不上。"""
     pdf = _FakePdf(["61522204989.35"])
     assert corroborate(pdf, 1, "61,522,204,989.35") is True
+
+
+# ── 留出集纪律 ──────────────────────────────────────────
+
+
+def test_refuse_items_skip_companies_already_ingested():
+    """已入库的公司不能再当「应拒答」占位。
+
+    建 v3 时若把五粮液、比亚迪入库，v2 里那两道拒答题就失效了——
+    所以选留出集公司时必须避开这些占位名。
+    """
+    from scripts.build_eval_v2 import OUT_OF_CORPUS, refuse_items
+
+    all_names = {c for c, _ in OUT_OF_CORPUS}
+    assert refuse_items(all_names) == []
+    assert len(refuse_items(set())) == len(OUT_OF_CORPUS)
+
+
+def test_out_of_corpus_placeholders_are_not_in_the_corpus():
+    """占位公司一旦被下载进 data/raw，拒答题就名存实亡。
+
+    这条测试是给未来的自己看的：扩语料时很容易顺手把五粮液加进去。
+    """
+    from pathlib import Path
+
+    from scripts.build_eval_v2 import OUT_OF_CORPUS
+
+    raw = Path(__file__).resolve().parents[1] / "data" / "raw"
+    if not raw.exists():
+        return  # CI 里没有语料，跳过
+    downloaded = {p.name.split("_")[1] for p in raw.glob("*.pdf") if "_" in p.name}
+    clash = {c for c, _ in OUT_OF_CORPUS} & downloaded
+    assert not clash, f"这些公司既是拒答占位又已入库：{clash}"
