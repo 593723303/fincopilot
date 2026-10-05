@@ -34,15 +34,30 @@ DATASETS = PROJECT_ROOT / "eval" / "datasets"
 SEED = 42
 
 # 语料外的公司：用于「应拒答」题。刻意选知名度高的，
-# 模型最容易凭预训练知识直接作答
-OUT_OF_CORPUS = [
-    ("五粮液", "2025年的营业收入"),
-    ("比亚迪", "2025年的研发投入"),
-    ("腾讯控股", "2025年的营业收入"),
-    ("小米集团", "2025年的净利润"),
-    ("京东方A", "2025年的营业收入"),
-    ("中国中免", "2025年的归母净利润"),
-]
+# 模型最容易凭预训练知识直接作答。
+#
+# 两套名单的意义：v2 那一套在开发过程中被反复看过，
+# 留出集若沿用，这 6 道题就不是「没见过的题」了。
+# 建 v3 时传 --refuse holdout 换成另一组公司。
+REFUSE_SETS = {
+    "default": [
+        ("五粮液", "2025年的营业收入"),
+        ("比亚迪", "2025年的研发投入"),
+        ("腾讯控股", "2025年的营业收入"),
+        ("小米集团", "2025年的净利润"),
+        ("京东方A", "2025年的营业收入"),
+        ("中国中免", "2025年的归母净利润"),
+    ],
+    "holdout": [
+        ("海天味业", "2025年的营业收入"),
+        ("顺丰控股", "2025年的归母净利润"),
+        ("中信证券", "2025年的营业收入"),
+        ("长城汽车", "2025年的研发投入"),
+        ("立讯精密", "2025年的净利润"),
+        ("牧原股份", "2025年的营业收入"),
+    ],
+}
+OUT_OF_CORPUS = REFUSE_SETS["default"]
 
 
 def load_draft() -> tuple[dict[str, list[dict]], dict[str, list[dict]]]:
@@ -176,9 +191,9 @@ def scope_items(code: str, name: str, pairs: list[dict], doc_year: int) -> list[
     return out
 
 
-def refuse_items(names: set[str]) -> list[dict]:
+def refuse_items(names: set[str], variant: str = "default") -> list[dict]:
     out = []
-    for company, what in OUT_OF_CORPUS:
+    for company, what in REFUSE_SETS[variant]:
         if company in names:
             continue  # 已入库就不能再当「应拒答」
         out.append(
@@ -206,6 +221,12 @@ def main() -> int:
         "--merge",
         default="v1",
         help="把该评估集的题目并进来；留出集必须传 none",
+    )
+    ap.add_argument(
+        "--refuse",
+        default="default",
+        choices=sorted(REFUSE_SETS),
+        help="拒答题用哪一组占位公司。留出集传 holdout，避免沿用已看过的题",
     )
     ap.add_argument(
         "--only",
@@ -240,7 +261,7 @@ def main() -> int:
         items.extend(tables + multis + scopes)
         stats.append((f"{code} {name}", len(tables), len(multis), len(scopes)))
 
-    items.extend(refuse_items(set(names.values())))
+    items.extend(refuse_items(set(names.values()), args.refuse))
 
     # 并入已有评估集。**留出集必须传 --merge none**：
     # 混进开发期间看过的题，它就不再是留出集了。
