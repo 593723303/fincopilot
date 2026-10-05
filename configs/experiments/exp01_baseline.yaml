@@ -48,7 +48,7 @@ generation:
 
 cache:
   exact: true
-  semantic: false            # 基线不开语义缓存，避免干扰指标
+  semantic: true            # 基线不开语义缓存，避免干扰指标
   similarity_threshold: 0.97
   entity_constraint: strict
   audit_sample_rate: 0.05

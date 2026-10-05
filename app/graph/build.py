@@ -21,6 +21,8 @@ from langgraph.graph import END, START, StateGraph
 from app.graph.nodes.agent import agent_node
 from app.graph.nodes.query import analyze_query
 from app.graph.nodes.rag import (
+    cache_lookup_node,
+    cache_store_node,
     chat_node,
     generate_node,
     grade_node,
@@ -52,6 +54,9 @@ def branch_after_analyze(state: GraphState) -> str:
     if state.get("refused"):
         return "end"
     route = state.get("route", "rag")
+    # 缓存命中的直接到结尾，不再走任何分支
+    if state.get("cached"):
+        return "end"
     if route == "chat":
         return "chat"
     if route == "agent":
@@ -77,6 +82,8 @@ def build_graph():
 
     graph.add_node("guard_in", guard_in)
     graph.add_node("analyze_query", analyze_query)
+    graph.add_node("cache_lookup", cache_lookup_node)
+    graph.add_node("cache_store", cache_store_node)
     graph.add_node("chat", chat_node)
     graph.add_node("agent", agent_node)
     graph.add_node("retrieve", retrieve_node)
@@ -86,15 +93,18 @@ def build_graph():
 
     graph.add_edge(START, "guard_in")
     graph.add_edge("guard_in", "analyze_query")
+    # 查缓存放在查询分析之后：实体要先解析出来才能算 entity_key，
+    # 而语义缓存靠它做硬约束（同一问法不同年份的向量相似度极高）
+    graph.add_edge("analyze_query", "cache_lookup")
 
     graph.add_conditional_edges(
-        "analyze_query",
+        "cache_lookup",
         branch_after_analyze,
         {"chat": "chat", "rag": "retrieve", "agent": "agent", "end": END},
     )
-    graph.add_edge("chat", END)
+    graph.add_edge("chat", "cache_store")
     # Agent 自带引用，无需再走 verify 的编号核验
-    graph.add_edge("agent", END)
+    graph.add_edge("agent", "cache_store")
     graph.add_edge("retrieve", "grade")
     graph.add_conditional_edges(
         "grade",
@@ -102,7 +112,8 @@ def build_graph():
         {"retry": "retrieve", "generate": "generate", "end": END},
     )
     graph.add_edge("generate", "verify")
-    graph.add_edge("verify", END)
+    graph.add_edge("verify", "cache_store")
+    graph.add_edge("cache_store", END)
 
     return graph.compile()
 

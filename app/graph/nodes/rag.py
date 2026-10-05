@@ -17,6 +17,7 @@ from app.graph.state import GraphState, experiment_of
 from app.observability.cost import TokenUsage, merge_usage, usage_from_response
 from app.observability.tracing import callbacks, trace_metadata
 from app.providers.registry import get_chat
+from app.rag.cache import entity_key, get_exact, get_semantic, put_exact, put_semantic
 from app.rag.retrievers import (
     QueryFilters,
     RetrievedChunk,
@@ -175,6 +176,61 @@ async def keyword_query_of(question: str, codes: list[str], years: list[int] | N
         out = out.replace(word, " ")
     out = " ".join(out.split())
     return (out or question) + hint
+
+
+async def cache_lookup_node(state: GraphState) -> GraphState:
+    """查缓存。命中则带着答案直接走到结尾。
+
+    放在查询分析之后：实体（公司、年份）要先解析出来，
+    才能算 entity_key——语义缓存靠它做硬约束。
+    """
+    if state.get("refused"):
+        return {}
+    exp = experiment_of(state)
+    raw = state.get("filters") or {}
+    question = state.get("rewritten") or state["question"]
+    ekey = entity_key(raw.get("company_codes") or [], raw.get("years") or [], question)
+
+    hit = await get_exact(question, exp, ekey)
+    source = "exact"
+    if hit is None:
+        hit = await get_semantic(milvus(), question, exp, ekey)
+        source = "semantic"
+    if not hit:
+        return {}
+
+    logger.info("缓存命中（%s）：%s", source, question[:30])
+    return {
+        "answer": hit.get("answer", ""),
+        "citations": hit.get("citations", []),
+        "cached": True,
+        "degraded": [*(state.get("degraded") or []), f"cache_hit:{source}"],
+    }
+
+
+async def cache_store_node(state: GraphState) -> GraphState:
+    """把答案写入两级缓存。
+
+    拒答、空答、降级产生的答案一律不缓存——
+    把一次偶发失败固化下来，比不缓存糟得多。
+    """
+    if state.get("cached") or state.get("refused"):
+        return {}
+    answer = (state.get("answer") or "").strip()
+    if not answer:
+        return {}
+    degraded = state.get("degraded") or []
+    if any(d.startswith(("agent_forced_answer", "agent_empty_answer")) for d in degraded):
+        return {}
+
+    exp = experiment_of(state)
+    raw = state.get("filters") or {}
+    question = state.get("rewritten") or state["question"]
+    ekey = entity_key(raw.get("company_codes") or [], raw.get("years") or [], question)
+    payload = {"answer": answer, "citations": state.get("citations") or []}
+    await put_exact(question, exp, ekey, payload)
+    await put_semantic(milvus(), question, exp, ekey, payload)
+    return {}
 
 
 async def retrieve_node(state: GraphState) -> GraphState:

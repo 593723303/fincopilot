@@ -58,7 +58,7 @@ generation:
 
 cache:
   exact: true
-  semantic: false
+  semantic: true
   similarity_threshold: 0.97
   entity_constraint: strict
   audit_sample_rate: 0.05
