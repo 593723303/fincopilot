@@ -200,3 +200,62 @@ async def test_forced_answer_is_never_empty(patched, monkeypatch):
     assert out["answer"].strip()
     assert "未能得出结论" in out["answer"]
     assert "agent_empty_answer" in out["degraded"]
+
+
+@pytest.mark.asyncio
+async def test_mental_arithmetic_is_pushed_back(patched):
+    """结论里有算出来的数、却一次计算工具都没调过，就是心算，必须打回。
+
+    提示词里已有「任何算术都必须走 calculate」，但那是概率性约束——
+    留出集实测万华化学的同比题两个数都查对了，结论却给出 2.74%（应为 11.62%）。
+    """
+    script = [
+        FakeResponse(content="万华化学2025年营业收入同比增长了2.74%。"),
+        FakeResponse(content="经工具计算，同比增长 11.62%。"),
+    ]
+    patched(FakeLLM(script))
+    out = await agent_mod.agent_node(_state(), {})
+    assert out["tool_errors"] == 1
+    assert "11.62" in out["answer"]
+    assert "agent_mental_arithmetic" in out["degraded"]
+
+
+@pytest.mark.asyncio
+async def test_mental_arithmetic_is_pushed_back_only_once(patched):
+    """反复打回只会多烧调用、最后仍输出同一个心算结果，不如留痕。"""
+    script = [FakeResponse(content=f"同比增长了 {i}.74%。") for i in range(5)]
+    patched(FakeLLM(script))
+    out = await agent_mod.agent_node(_state(), {})
+    assert out["tool_errors"] == 1
+    assert "agent_mental_arithmetic" in out["degraded"]
+
+
+@pytest.mark.asyncio
+async def test_plain_number_answer_is_not_pushed_back(patched):
+    """直接读表的金额不是算出来的，不该被打回。"""
+    llm = patched(FakeLLM([FakeResponse(content="营业收入为 168,838,102,514.79 元 [第6页]。")]))
+    out = await agent_mod.agent_node(_state(), {})
+    assert out["tool_errors"] == 0
+    assert len(llm.calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_percentage_after_calculate_is_accepted(patched, monkeypatch):
+    """调过 calculate 之后给出百分比，是正常路径，不能打回。"""
+
+    class _Tool:
+        name = "calculate"
+        coroutine = None
+
+        def invoke(self, _args):
+            return "11.62"
+
+    call = {"name": "calculate", "args": {"expression": "1"}, "id": "x"}
+    script = [
+        FakeResponse(tool_calls=[call]),
+        FakeResponse(content="同比增长 11.62%。"),
+    ]
+    patched(FakeLLM(script), tools=[_Tool()])
+    out = await agent_mod.agent_node(_state(), {})
+    assert out["tool_errors"] == 0
+    assert "11.62" in out["answer"]

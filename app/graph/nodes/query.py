@@ -162,8 +162,19 @@ def unambiguous_aliases(corpus: list[tuple[str, str, int]]) -> dict[str, str]:
     return {alias: next(iter(codes)) for alias, codes in owners.items() if len(codes) == 1}
 
 
+def aliases_by_code(corpus: list[tuple[str, str, int]]) -> dict[str, set[str]]:
+    """代码 → 该公司在本语料内**唯一**的别名集合。"""
+    out: dict[str, set[str]] = {}
+    for alias, code in unambiguous_aliases(corpus).items():
+        out.setdefault(code, set()).add(alias)
+    return out
+
+
 def resolve_companies(
-    analysis: QueryAnalysis, corpus: list[tuple[str, str, int]], question: str = ""
+    analysis: QueryAnalysis,
+    corpus: list[tuple[str, str, int]],
+    question: str = "",
+    history: str = "",
 ) -> list[str]:
     """把模型给出的公司名解析成股票代码。
 
@@ -174,13 +185,24 @@ def resolve_companies(
 
     名字→代码是确定性映射，程序做不会错。模型直接写了六位代码的
     （用户原话里就有代码）仍然采信，但必须在语料内。
+
+    最后一道闸是「问句里必须真的出现过」。模型面对语料外的公司时，
+    会**贴到名字最相近的已收录公司**——实测问「海天味业2025年营业收入」
+    返回了海康威视的真实数字，数字真、引用真、格式对，
+    用户没有任何办法发现自己拿到的是别家财报。而且它是概率性的：
+    单独调用这个节点时能正确返回空，走完整图时就贴错了。
+
+    所以不能靠提示词约束，只能用代码判定：
+    解析出的每个公司，其别名必须在问句（或指代消解后的问句）里出现过，
+    否则就是模型凭空补的，一律丢弃。
     """
     known = {code for code, _n, _y in corpus}
     aliases = unambiguous_aliases(corpus)
     # 只采信**用户原话里真的出现过**的代码。模型即使被告知不要推断代码，
     # 仍会往这个字段里填一个，而填错的概率不低——实测问茅台时它填 600900。
     # 问句里没有的代码一律当作猜测丢弃。
-    asked = set(CODE_PAT.findall(question))
+    haystack = f"{question} {history}"
+    asked = set(CODE_PAT.findall(haystack))
     codes = {c for c in analysis.company_codes if c in known and c in asked}
     for name in analysis.companies:
         name = (name or "").strip()
@@ -197,7 +219,20 @@ def resolve_companies(
             if alias in name or name in alias:
                 codes.add(code)
                 break
-    return sorted(codes)
+
+    # 硬校验：留下的每家公司，都必须能在**用户写过的文本**里找到它的某个别名。
+    #
+    # 这里刻意不包含 analysis.rewritten。第一版把改写后的问句也算进来，
+    # 结果完全拦不住——模型正是在「指代消解」这一步把公司名换掉的：
+    # 问「海天味业2025年营业收入」，它改写成「海康威视2025年营业收入」，
+    # 于是校验自然通过。**用模型的输出去校验模型的输出，等于没校验。**
+    #
+    # 代价是指代类追问（「它去年的呢」）要靠历史消息兜住，由调用方传入。
+    by_code = aliases_by_code(corpus)
+    kept = {c for c in codes if c in asked or any(a in haystack for a in by_code.get(c, ()))}
+    if kept != codes:
+        logger.info("丢弃问句中未出现的公司：%s", sorted(codes - kept))
+    return sorted(kept)
 
 
 def fallback_analysis(question: str, corpus: list[tuple[str, str, int]]) -> QueryAnalysis:
@@ -270,7 +305,36 @@ async def analyze_query(state: GraphState, config: RunnableConfig) -> GraphState
         route = exp.router.fallback_branch
 
     merged = merge_usage(state.get("usage"), usage)
-    codes = resolve_companies(analysis, corpus, question)
+    # 历史里只取用户自己说过的话。把助手的回答也算进来，
+    # 等于又让模型的输出参与校验——助手上一轮提到过的公司会被当成用户问过。
+    user_said = " ".join(
+        str(getattr(m, "content", "")) for m in history if getattr(m, "type", "") == "human"
+    )
+    codes = resolve_companies(analysis, corpus, question, user_said)
+
+    # 模型识别出了公司名，却一个都没能解析成已收录的公司——
+    # 说明问的是语料外的公司。此时**必须拒答，不能把公司过滤留空**：
+    # 留空会让检索退化成「全语料搜索」，捞回某一家的真实数字交给模型，
+    # 于是问「海天味业2025年营业收入」会答出海康威视的 925 亿。
+    # 数字真、引用真、格式对，用户无从发现拿到的是别家财报。
+    if analysis.companies and not codes:
+        logger.info("公司 %s 不在语料内，直接拒答", analysis.companies)
+        return {
+            "rewritten": analysis.rewritten,
+            "route": route,
+            "filters": {"company_codes": [], "years": analysis.years, "statement_type": None},
+            "refused": True,
+            "refuse_reason": "FC-2002",
+            # 文案里不能复述 analysis.companies——它可能正是模型贴错的那个名字。
+            # 实测问「海天味业」时这里会写成「未收录『海康威视』」，
+            # 等于把模型的幻觉直接念给用户听。只说范围，不说它以为的是谁。
+            "answer": (
+                "您询问的公司不在已收录范围内，无法回答。当前可查询："
+                + "、".join(sorted({n for _c, n, _y in corpus if n}))
+                + "。"
+            ),
+            "usage": merged,
+        }
 
     logger.info(
         "查询分析：route=%s conf=%.2f companies=%s codes=%s years=%s",

@@ -415,3 +415,46 @@ def test_announced_but_uncalled_tool_is_detected(text):
     from app.graph.nodes.agent import MALFORMED_CALL
 
     assert MALFORMED_CALL.search(text) is not None
+
+
+# ── P0-5：语料外公司被「贴」到相近公司（留出集实测） ──────
+
+
+def test_snapped_company_is_rejected():
+    """模型面对语料外公司会贴到名字最相近的已收录公司。
+
+    留出集实测：问「海天味业2025年营业收入」，返回了海康威视的真实数字——
+    数字真、引用真、格式对，用户无从发现拿到的是别家财报。
+    且它是概率性的，单独调路由时能正确返回空，走完整图就贴错。
+    """
+    a = _analysis(companies=["海康威视"])
+    assert resolve_companies(a, CORPUS_12, "海天味业2025年的营业收入是多少？") == []
+
+
+def test_rewritten_question_must_not_validate_the_company():
+    """校验不能用模型改写后的问句——模型正是在改写时把名字换掉的。
+
+    第一版把 rewritten 也算进匹配范围，于是完全拦不住：
+    问「海天味业…」，模型改写成「海康威视…」，校验自然通过。
+    **用模型的输出去校验模型的输出，等于没校验。**
+    """
+    a = _analysis(companies=["海康威视"], rewritten="海康威视2025年的营业收入是多少？")
+    assert resolve_companies(a, CORPUS_12, "海天味业2025年的营业收入是多少？") == []
+
+
+def test_company_from_user_history_is_kept():
+    """指代类追问靠历史消息兜住，不能误伤。"""
+    a = _analysis(companies=["贵州茅台"])
+    got = resolve_companies(a, CORPUS_12, "它2025年的净利润呢？", history="贵州茅台的营业收入")
+    assert got == ["600519"]
+
+
+def test_assistant_text_does_not_count_as_history():
+    """历史只取用户说过的话。
+
+    把助手的回答也算进来，等于又让模型的输出参与校验——
+    助手上一轮提到过的公司会被当成用户问过。
+    """
+    a = _analysis(companies=["海康威视"])
+    # history 只传用户原话；助手提过「海康威视」不应使其通过
+    assert resolve_companies(a, CORPUS_12, "海天味业的营收", history="海天味业") == []

@@ -86,6 +86,16 @@ _SYSTEM = """你是财报分析助手，可以调用工具查阅年报并做计�
 
 {corpus_hint}"""
 
+# 回答里出现百分比或「增长/下降 X」这类**算出来的**数值。
+# 直接读表读不出百分比——年报里虽然印着增减率列，但那一列同样是算好的数，
+# 模型若要给出它，要么引用那一列、要么自己算；自己算就必须走工具。
+COMPUTED_VALUE = re.compile(r"\d[\d,]*\.?\d*\s*%|百分之\s*\d")
+_RECOMPUTE = (
+    "上一步的结论里出现了算出来的数值，但整个过程没有调用过 calculate 工具。"
+    "心算的中间步骤写得再详细，最后那个数字也经常是错的——"
+    "实测把 11.62% 算成了 2.74%。请用 calculate 工具重算一遍再给结论。"
+)
+
 _FORCE_ANSWER = (
     "已达到本次分析的步数上限。请基于目前已经查到的信息给出结论，"
     "并明确说明哪些部分因资料不足而未能完成。不要再调用工具。"
@@ -128,6 +138,7 @@ async def agent_node(state: GraphState, config: RunnableConfig) -> GraphState:
     steps = 0
     errors = 0
     forced = False
+    recompute_asked = False
 
     while True:
         # 护栏在调用前检查：超限还调一次是白花钱
@@ -173,6 +184,25 @@ async def agent_node(state: GraphState, config: RunnableConfig) -> GraphState:
                 )
             )
             continue
+
+        # 结论里有算出来的数、却一次计算工具都没调过，就是心算。
+        # 提示词里已经写了「任何算术都必须走 calculate」，但那是概率性约束，
+        # 实测压不住：万华化学的同比题两个数都查对了，结论却给出 2.74%（应为 11.62%）。
+        # 改成代码判定——这与「别让模型推断结构」是同一个思路。
+        # 只打回一次，计入工具失败次数，交给护栏收敛。
+        did_calculate = any(st["tool"] == "calculate" for st in scratchpad)
+        mental = not tool_calls and not forced and not did_calculate and COMPUTED_VALUE.search(text)
+        if mental and not recompute_asked:
+            # 只打回一次。反复打回只会多烧几次调用，最后仍然输出同一个心算结果，
+            # 还要白白撞一遍护栏——不如让它留痕，由评估和日志暴露出来。
+            recompute_asked = True
+            errors += 1
+            logger.warning("Agent 给出了心算结果，要求用工具重算")
+            messages.append(HumanMessage(content=_RECOMPUTE))
+            continue
+        if mental:
+            degraded.append("agent_mental_arithmetic")
+            logger.warning("Agent 重算后仍未调用工具，结果可能不可靠")
 
         if not tool_calls or forced:
             # 护栏触顶后模型可能仍然只发工具调用、不给正文，这时 text 是空串，
