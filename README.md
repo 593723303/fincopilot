@@ -5,7 +5,8 @@
 技术难点锚定在**中文年报的表格数值问答**：量纲混用（元/万元/亿元）、科目口径不一
 （营业收入 ≠ 营业总收入）、表格跨页与合并单元格。
 
-完整架构设计见 [`../fincopilot-architecture.html`](../fincopilot-architecture.html)。
+完整架构设计见 [`fincopilot-architecture.html`](fincopilot-architecture.html)——
+22 章，含 22 条架构决策记录（ADR）、评估体系设计与面试准备。
 
 ---
 

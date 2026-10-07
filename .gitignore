@@ -13,8 +13,6 @@ build/
 # 本地数据与产物
 data/
 volumes/
-eval/reports/*.md
-!eval/reports/.gitkeep
 tmp/
 *.log
 

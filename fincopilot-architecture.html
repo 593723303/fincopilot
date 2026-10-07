@@ -1,0 +1,2218 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FinCopilot 架构设计</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,600;1,6..72,400&display=swap">
+<style>
+/* ── tokens ─────────────────────────────────────────── */
+:root{
+  --paper:#EFF0EB;
+  --surface:#FAFAF7;
+  --surface-2:#F5F5F0;
+  --ink:#19222E;
+  --ink-soft:#3B4756;
+  --muted:#6A7683;
+  --rule:#D5D8D0;
+  --rule-soft:#E3E5DE;
+  --accent:#1F4D6B;
+  --accent-soft:#E2EAEF;
+  --signal:#8F3F2C;
+  --signal-soft:#F2E3DE;
+  --ok:#3F6B4A;
+  --warn:#8A6B1F;
+
+  --sans:'IBM Plex Sans',-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC','Microsoft YaHei',sans-serif;
+  --mono:'IBM Plex Mono','Cascadia Code',Consolas,'Courier New',monospace;
+  --serif:'Newsreader',Cambria,Georgia,'Songti SC','SimSun',serif;
+
+  --s-1:.8125rem; --s0:.9375rem; --s1:1.0625rem; --s2:1.375rem;
+  --s3:1.75rem; --s4:2.375rem; --s5:3.25rem;
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --paper:#12161B;
+    --surface:#1A2027;
+    --surface-2:#212931;
+    --ink:#E7E9E3;
+    --ink-soft:#C2C8C6;
+    --muted:#8D989E;
+    --rule:#2E3740;
+    --rule-soft:#262E36;
+    --accent:#7FB6D6;
+    --accent-soft:#1D2C36;
+    --signal:#D28769;
+    --signal-soft:#33241E;
+    --ok:#7FAE88;
+    --warn:#C9A855;
+  }
+}
+:root[data-theme="dark"]{
+  --paper:#12161B;
+  --surface:#1A2027;
+  --surface-2:#212931;
+  --ink:#E7E9E3;
+  --ink-soft:#C2C8C6;
+  --muted:#8D989E;
+  --rule:#2E3740;
+  --rule-soft:#262E36;
+  --accent:#7FB6D6;
+  --accent-soft:#1D2C36;
+  --signal:#D28769;
+  --signal-soft:#33241E;
+  --ok:#7FAE88;
+  --warn:#C9A855;
+}
+
+/* ── base ───────────────────────────────────────────── */
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{
+  margin:0; background:var(--paper); color:var(--ink);
+  font-family:var(--sans); font-size:var(--s0); line-height:1.7;
+  font-feature-settings:"kern","liga";
+}
+a{color:var(--accent); text-decoration-thickness:1px; text-underline-offset:2px}
+a:focus-visible,button:focus-visible{outline:2px solid var(--signal); outline-offset:2px; border-radius:2px}
+code,pre,.mono{font-family:var(--mono)}
+::selection{background:var(--accent-soft)}
+
+/* ── masthead ───────────────────────────────────────── */
+.masthead{
+  border-bottom:1px solid var(--rule);
+  background:var(--surface);
+}
+.masthead-in{
+  max-width:1360px; margin:0 auto; padding:3.5rem 2rem 2.5rem;
+  display:flex; flex-direction:column; gap:1.25rem;
+}
+.kicker{
+  font-family:var(--mono); font-size:var(--s-1); letter-spacing:.14em;
+  text-transform:uppercase; color:var(--signal);
+}
+.masthead h1{
+  margin:0; font-size:var(--s5); line-height:1.05; letter-spacing:-.02em;
+  font-weight:700; text-wrap:balance; max-width:20ch;
+}
+.masthead h1 em{
+  font-family:var(--serif); font-style:italic; font-weight:400;
+  letter-spacing:-.01em; color:var(--accent);
+}
+.standfirst{
+  margin:0; max-width:62ch; font-size:var(--s1); color:var(--ink-soft);
+}
+.facts{
+  display:flex; flex-wrap:wrap; gap:0 2.5rem; margin-top:.75rem;
+  padding-top:1.25rem; border-top:1px solid var(--rule-soft);
+  font-family:var(--mono); font-size:var(--s-1); color:var(--muted);
+}
+.facts div{display:flex; gap:.5rem}
+.facts b{font-weight:500; color:var(--ink-soft)}
+
+/* ── shell ──────────────────────────────────────────── */
+.shell{
+  max-width:1360px; margin:0 auto; padding:0 2rem 6rem;
+  display:grid; grid-template-columns:230px minmax(0,1fr); gap:4rem;
+  align-items:start;
+}
+nav.toc{
+  position:sticky; top:0; padding:2.75rem 0;
+  max-height:100vh; overflow-y:auto;
+  font-size:var(--s-1); line-height:1.55;
+}
+nav.toc h2{
+  font-family:var(--mono); font-size:var(--s-1); letter-spacing:.14em;
+  text-transform:uppercase; color:var(--muted); margin:0 0 1rem; font-weight:500;
+}
+nav.toc ol{list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:.55rem}
+nav.toc a{
+  display:flex; gap:.6rem; color:var(--ink-soft); text-decoration:none;
+  padding:.1rem 0;
+}
+nav.toc a span{font-family:var(--mono); color:var(--muted); font-size:.75rem; padding-top:.15rem}
+nav.toc a:hover{color:var(--accent)}
+nav.toc a:hover span{color:var(--signal)}
+
+main{padding:2.75rem 0 0; min-width:0}
+
+/* ── sections ───────────────────────────────────────── */
+section{margin:0 0 4.5rem; scroll-margin-top:1.5rem}
+.sec-head{
+  display:flex; align-items:baseline; gap:1rem;
+  border-top:2px solid var(--ink); padding-top:.85rem; margin-bottom:1.75rem;
+}
+.sec-num{
+  font-family:var(--serif); font-size:var(--s2); color:var(--signal);
+  font-weight:600; line-height:1; flex:none;
+}
+h2.sec-title{margin:0; font-size:var(--s3); letter-spacing:-.015em; line-height:1.2; text-wrap:balance}
+h3{
+  margin:2.25rem 0 .85rem; font-size:var(--s1); letter-spacing:-.005em;
+  padding-bottom:.4rem; border-bottom:1px solid var(--rule-soft);
+}
+h4{margin:1.5rem 0 .6rem; font-size:var(--s0); color:var(--ink-soft); font-weight:600}
+p{margin:0 0 1rem; max-width:70ch}
+ul,ol{margin:0 0 1rem; padding-left:1.35rem; max-width:70ch}
+li{margin:.3rem 0}
+li::marker{color:var(--muted)}
+strong{font-weight:600}
+hr{border:0; border-top:1px solid var(--rule-soft); margin:2rem 0}
+
+/* ── tables ─────────────────────────────────────────── */
+.tw{overflow-x:auto; margin:0 0 1.25rem; border:1px solid var(--rule); background:var(--surface)}
+table{border-collapse:collapse; width:100%; font-size:var(--s-1); min-width:520px}
+thead th{
+  text-align:left; font-family:var(--mono); font-weight:500;
+  font-size:.75rem; letter-spacing:.08em; text-transform:uppercase;
+  color:var(--muted); padding:.7rem .9rem; border-bottom:1px solid var(--rule);
+  background:var(--surface-2); white-space:nowrap;
+}
+tbody td{padding:.65rem .9rem; border-bottom:1px solid var(--rule-soft); vertical-align:top}
+tbody tr:last-child td{border-bottom:0}
+tbody tr:hover{background:var(--surface-2)}
+td.num,th.num{font-variant-numeric:tabular-nums; text-align:right}
+td code{font-size:.8125rem; background:var(--surface-2); padding:.1em .35em; border-radius:2px}
+p code,li code{font-size:.85em; background:var(--surface-2); padding:.12em .38em; border-radius:2px; border:1px solid var(--rule-soft)}
+
+/* ── code blocks ────────────────────────────────────── */
+pre{
+  margin:0 0 1.25rem; padding:1.15rem 1.25rem; overflow-x:auto;
+  background:var(--surface); border:1px solid var(--rule);
+  border-left:3px solid var(--accent);
+  font-size:.8125rem; line-height:1.65; color:var(--ink-soft);
+  tab-size:2;
+}
+pre b{color:var(--ink); font-weight:600}
+pre i{color:var(--muted); font-style:normal}
+pre u{color:var(--signal); text-decoration:none}
+
+/* ── callouts ───────────────────────────────────────── */
+.note{
+  margin:0 0 1.25rem; padding:.95rem 1.15rem;
+  background:var(--surface); border:1px solid var(--rule);
+  border-left:3px solid var(--muted); font-size:var(--s-1); max-width:74ch;
+}
+.note p{margin:0; max-width:none}
+.note p + p{margin-top:.5rem}
+.note-key{border-left-color:var(--signal); background:var(--signal-soft)}
+.note-ok{border-left-color:var(--ok)}
+.note .tag{
+  font-family:var(--mono); font-size:.7rem; letter-spacing:.12em;
+  text-transform:uppercase; color:var(--signal); display:block; margin-bottom:.35rem;
+}
+.note-ok .tag{color:var(--ok)}
+.note:not(.note-key):not(.note-ok) .tag{color:var(--muted)}
+
+/* ── architecture diagram ───────────────────────────── */
+.arch{
+  display:flex; flex-direction:column; gap:.4rem; margin:0 0 1.5rem;
+  border:1px solid var(--rule); background:var(--surface); padding:.75rem;
+}
+.layer{
+  display:grid; grid-template-columns:96px minmax(0,1fr); gap:.75rem;
+  align-items:stretch;
+}
+.layer-tag{
+  font-family:var(--mono); font-size:.7rem; letter-spacing:.08em;
+  text-transform:uppercase; color:var(--muted);
+  display:flex; align-items:center; padding:.5rem .25rem; line-height:1.25;
+  border-right:1px solid var(--rule-soft);
+}
+.boxes{display:flex; flex-wrap:wrap; gap:.4rem}
+.box{
+  flex:1 1 150px; min-width:0; padding:.6rem .7rem;
+  background:var(--surface-2); border:1px solid var(--rule-soft);
+  font-size:.8125rem; line-height:1.4;
+}
+.box b{display:block; font-weight:600; font-size:.8125rem; margin-bottom:.15rem}
+.box span{color:var(--muted); font-size:.75rem; font-family:var(--mono)}
+.box-accent{border-color:var(--accent); background:var(--accent-soft)}
+.box-signal{border-color:var(--signal); background:var(--signal-soft)}
+.flowarrow{
+  text-align:center; color:var(--muted); font-family:var(--mono);
+  font-size:.75rem; line-height:1; padding:.1rem 0;
+}
+
+/* ── step flow ──────────────────────────────────────── */
+ol.steps{list-style:none; padding:0; margin:0 0 1.5rem; max-width:none}
+ol.steps > li{
+  display:grid; grid-template-columns:2.1rem minmax(0,1fr); gap:1rem;
+  padding:0 0 1.1rem; margin:0; position:relative;
+}
+ol.steps > li::before{
+  content:attr(data-n); grid-column:1;
+  font-family:var(--mono); font-size:.75rem; color:var(--signal);
+  border:1px solid var(--rule); background:var(--surface);
+  width:2.1rem; height:1.7rem; display:flex; align-items:center; justify-content:center;
+}
+ol.steps > li::after{
+  content:""; position:absolute; left:1.05rem; top:1.7rem; bottom:0;
+  width:1px; background:var(--rule);
+}
+ol.steps > li:last-child::after{display:none}
+ol.steps > li:last-child{padding-bottom:0}
+.step-body b{display:block; margin-bottom:.15rem}
+.step-body span{color:var(--muted); font-size:var(--s-1)}
+.step-body .mono{font-size:.78rem}
+
+/* ── milestone rail ─────────────────────────────────── */
+.ms{display:flex; flex-direction:column; gap:0; margin:0 0 1.5rem; border:1px solid var(--rule)}
+.ms-row{
+  display:grid; grid-template-columns:5.5rem minmax(0,1fr) 7rem; gap:1rem;
+  padding:.9rem 1rem; border-bottom:1px solid var(--rule-soft); align-items:start;
+  background:var(--surface);
+}
+.ms-row:last-child{border-bottom:0}
+.ms-id{font-family:var(--mono); font-size:.8125rem; color:var(--signal); font-weight:500}
+.ms-body b{display:block; margin-bottom:.2rem}
+.ms-body span{font-size:var(--s-1); color:var(--muted)}
+.ms-out{font-family:var(--mono); font-size:.72rem; color:var(--muted); text-align:right; line-height:1.4}
+@media (max-width:640px){
+  .ms-row{grid-template-columns:1fr; gap:.35rem}
+  .ms-out{text-align:left}
+}
+
+/* ── pills ──────────────────────────────────────────── */
+.pill{
+  display:inline-block; font-family:var(--mono); font-size:.7rem;
+  letter-spacing:.06em; text-transform:uppercase; padding:.1rem .45rem;
+  border:1px solid currentColor; line-height:1.5; white-space:nowrap;
+}
+.p-core{color:var(--signal)}
+.p-later{color:var(--muted)}
+.p-ok{color:var(--ok)}
+
+/* ── footer ─────────────────────────────────────────── */
+footer{
+  border-top:1px solid var(--rule); background:var(--surface);
+  padding:2.5rem 2rem; margin-top:2rem;
+}
+.foot-in{
+  max-width:1360px; margin:0 auto; display:flex; flex-wrap:wrap;
+  gap:1rem 2.5rem; justify-content:space-between;
+  font-family:var(--mono); font-size:var(--s-1); color:var(--muted);
+}
+
+/* ── responsive ─────────────────────────────────────── */
+@media (max-width:1080px){
+  .shell{grid-template-columns:minmax(0,1fr); gap:0; padding:0 1.5rem 4rem}
+  nav.toc{position:static; max-height:none; padding:2rem 0 0; border-bottom:1px solid var(--rule)}
+  nav.toc ol{display:grid; grid-template-columns:repeat(auto-fill,minmax(200px,1fr)); gap:.5rem 1.5rem; padding-bottom:1.75rem}
+  .masthead-in{padding:2.5rem 1.5rem 2rem}
+  .layer{grid-template-columns:minmax(0,1fr); gap:.35rem}
+  .layer-tag{border-right:0; border-bottom:1px solid var(--rule-soft); padding-bottom:.35rem}
+}
+@media (max-width:560px){
+  :root{--s5:2.25rem; --s4:1.85rem; --s3:1.45rem}
+  .facts{gap:.4rem 1.5rem; flex-direction:column}
+}
+@media (prefers-reduced-motion:reduce){
+  *{animation-duration:.01ms!important; transition-duration:.01ms!important; scroll-behavior:auto!important}
+}
+html{scroll-behavior:smooth}
+@media print{
+  nav.toc,footer{display:none}
+  .shell{grid-template-columns:1fr; padding:0}
+  section{break-inside:avoid}
+}
+</style>
+</head>
+<body>
+
+<header class="masthead">
+  <div class="masthead-in">
+    <div class="kicker">架构设计说明书 · v1.1 · 0 → 1</div>
+    <h1>FinCopilot<br><em>财报智能问答与分析服务</em></h1>
+    <p class="standfirst">
+      一个基于企业年报的检索增强问答与多步分析服务。用户以自然语言提问，系统从年报原文中检索证据并生成带引用的答案；
+      涉及跨公司对比、比率计算、趋势分析的问题，则由 Agent 自主编排工具完成。
+      项目的技术难点锚定在<strong>中文年报的表格数值问答</strong>——量纲混用、科目口径不一、表格跨页，
+      这些是英文财报场景遇不到、也最难被同类项目复制的问题。
+    </p>
+    <div class="facts">
+      <div><b>服务形态</b> 单体双角色（API / Worker）</div>
+      <div><b>技术主线</b> LangChain · LangGraph · Milvus · FastAPI</div>
+      <div><b>交付周期</b> 6 个里程碑</div>
+      <div><b>文档状态</b> 待评审</div>
+    </div>
+  </div>
+</header>
+
+<div class="shell">
+
+<nav class="toc">
+  <h2>目录</h2>
+  <ol>
+    <li><a href="#s0"><span>§</span>如何阅读</a></li>
+    <li><a href="#s1"><span>01</span>服务定位与边界</a></li>
+    <li><a href="#s2"><span>02</span>使用场景全扫</a></li>
+    <li><a href="#s3"><span>03</span>系统上下文</a></li>
+    <li><a href="#s4"><span>04</span>架构总览</a></li>
+    <li><a href="#s5"><span>05</span>组件设计</a></li>
+    <li><a href="#s6"><span>06</span>核心流程</a></li>
+    <li><a href="#s7"><span>07</span>数据模型</a></li>
+    <li><a href="#s8"><span>08</span>接口契约</a></li>
+    <li><a href="#s9"><span>09</span>配置与实验</a></li>
+    <li><a href="#s10"><span>10</span>非功能设计</a></li>
+    <li><a href="#s11"><span>11</span>语料与数据源</a></li>
+    <li><a href="#s12"><span>12</span>评估体系</a></li>
+    <li><a href="#s13"><span>13</span>技术选型</a></li>
+    <li><a href="#s14"><span>14</span>平台选型与成本</a></li>
+    <li><a href="#s15"><span>15</span>部署架构</a></li>
+    <li><a href="#s16"><span>16</span>里程碑拆解</a></li>
+    <li><a href="#s17"><span>17</span>架构决策记录</a></li>
+    <li><a href="#s18"><span>18</span>风险登记</a></li>
+    <li><a href="#s19"><span>19</span>面试准备</a></li>
+    <li><a href="#s20"><span>20</span>术语表</a></li>
+  </ol>
+</nav>
+
+<main>
+
+<section id="s0">
+  <div class="sec-head"><div class="sec-num">§</div><h2 class="sec-title">如何阅读这份文档</h2></div>
+
+  <p>
+    这是一份从零构建 AI 服务的完整技术设计。读者不需要事先了解 RAG 或 Agent——
+    所有专有名词在 <a href="#s20">§20 术语表</a> 里有大白话解释，正文首次出现时也会附一句说明。
+  </p>
+
+  <h3>按目的选择阅读路线</h3>
+  <div class="tw"><table>
+    <thead><tr><th style="width:9.5rem">你的目的</th><th>建议顺序</th><th class="num">用时</th></tr></thead>
+    <tbody>
+      <tr><td><strong>先搞懂这是个什么东西</strong></td>
+        <td><a href="#s20">§20 术语表</a> → <a href="#s1">§1 定位</a> → <a href="#s2">§2 场景</a> → <a href="#s4">§4 架构总览</a> → <a href="#s6">§6 核心流程</a></td>
+        <td class="num">30 分钟</td></tr>
+      <tr><td><strong>准备动手开发</strong></td>
+        <td><a href="#s13">§13 技术选型</a> → <a href="#s14">§14 平台与开工清单</a> → <a href="#s16">§16 里程碑</a> → 回头细读 <a href="#s5">§5</a>–<a href="#s9">§9</a></td>
+        <td class="num">1.5 小时</td></tr>
+      <tr><td><strong>准备面试讲这个项目</strong></td>
+        <td><a href="#s19">§19 面试准备</a> → <a href="#s12">§12 评估体系</a> → <a href="#s17">§17 决策记录</a> → <a href="#s1">§1.1 差异化定位</a></td>
+        <td class="num">1 小时</td></tr>
+      <tr><td><strong>评审这份设计</strong></td>
+        <td><a href="#s1">§1 边界与目标</a> → <a href="#s17">§17 ADR</a> → <a href="#s18">§18 风险</a> → <a href="#s10">§10 非功能设计</a></td>
+        <td class="num">45 分钟</td></tr>
+    </tbody>
+  </table></div>
+
+  <h3>阅读约定</h3>
+  <ul>
+    <li><code>§n</code> 表示本文第 n 章，可点击跳转。</li>
+    <li>红色左边框的提示框是<strong>关键决策或易错点</strong>，跳读时也应当看。灰色为补充说明，绿色为「这样做的好处」。</li>
+    <li>表格中的「—」表示待项目实施后填入的实测数据，不是遗漏。</li>
+    <li>标注 <span class="pill p-later">待实测</span> 的数值是估算值，实施后需用真实数据回填。</li>
+  </ul>
+
+  <div class="note">
+    <span class="tag">这份文档同时是三样东西</span>
+    <p><strong>开发时的实施蓝图</strong>、<strong>决策时的依据记录</strong>、<strong>面试时的技术叙事底稿</strong>。
+    第三点尤其重要——项目最终的价值载体不是代码，而是「为什么这么做」的完整链条，
+    那条链条就写在 §17 决策记录与 §19 面试准备里。</p>
+  </div>
+</section>
+
+<!-- ══════════ 01 ══════════ -->
+<section id="s1">
+  <div class="sec-head"><div class="sec-num">01</div><h2 class="sec-title">服务定位与边界</h2></div>
+
+  <h3>1.1 一句话定义</h3>
+  <p>
+    FinCopilot 接收关于上市公司财务表现的自然语言问题，基于已入库的年报原文返回<strong>可溯源的答案</strong>；
+    当问题无法由单次检索回答时，自主调用检索、结构化查询、计算、绘图工具完成多步分析。
+  </p>
+
+  <h4>差异化定位</h4>
+  <div class="note note-key">
+    <span class="tag">本项目真正稀缺的地方</span>
+    <p>「LangGraph + RAG + 财报 + RAGAS 评估」这个组合，开源社区已有相当数量的同类项目，
+    单靠「搭了一套带评估的 RAG 系统」不构成差异化。</p>
+    <p>本项目的立足点是更窄、更硬的一个问题：<strong>中文 A 股年报的表格数值问答，以及随之而来的单位归一与科目口径对齐</strong>。
+    英文 10-K 的项目遍地都是，但中文年报的表格结构显著更复杂——合并单元格多、量纲（元/万元/亿元）混用、
+    科目命名不统一——做的人少，难点真实、可量化、能讲出细节。</p>
+    <p>因此评估体系在本项目中的角色是<strong>证明工具而非主角</strong>：它用来证明「这个难题被解决到了什么程度」，
+    而不是作为卖点本身。</p>
+  </div>
+
+  <h3>1.2 在做什么 / 不做什么</h3>
+  <div class="tw"><table>
+    <thead><tr><th style="width:50%">在范围内</th><th>明确不做</th></tr></thead>
+    <tbody>
+      <tr><td>A 股上市公司年报 / 季报 PDF 的解析与索引</td><td>实时行情、盘中数据（只做静态报告 + 落库指标）</td></tr>
+      <tr><td>基于原文的事实问答，答案必须带页码级引用</td><td>投资建议生成（触发即进人工确认，不自动输出）</td></tr>
+      <tr><td>表格类数值问答（营收构成、分季度数据）</td><td>OCR 扫描件（仅支持文本层可提取的 PDF）</td></tr>
+      <tr><td>跨公司、跨年度对比与比率计算</td><td>多租户与企业级权限体系（预留字段，不实现）</td></tr>
+      <tr><td>文档中无依据时明确拒答</td><td>模型训练（仅一次 LoRA 微调小模型用于路由，属增强项）</td></tr>
+      <tr><td>全链路可观测、成本核算、离线评估</td><td>移动端 App</td></tr>
+    </tbody>
+  </table></div>
+
+  <div class="note note-key">
+    <span class="tag">边界的意义</span>
+    <p>「不做」清单和「做」清单同等重要。0→1 阶段的最大风险不是技术难度，是范围蔓延。
+    任何新想法先进 backlog，不进当前里程碑。</p>
+  </div>
+
+  <h3>1.3 质量目标（可验收）</h3>
+  <p><strong>主指标</strong>——直接衡量答案对错，不依赖模型评判，是唯一的验收依据：</p>
+  <div class="tw"><table>
+    <thead><tr><th>指标</th><th class="num">目标值</th><th>验收方式</th></tr></thead>
+    <tbody>
+      <tr><td><strong>数值题准确率</strong>（单位归一后 ±0.5% 容差）</td><td class="num">≥ 80%</td><td>评估集表格子集，确定性判定</td></tr>
+      <tr><td><strong>事实题准确率</strong></td><td class="num">≥ 88%</td><td>评估集单跳子集，规则判定</td></tr>
+      <tr><td><strong>拒答准确率</strong>（应拒答且拒答）</td><td class="num">≥ 90%</td><td>评估集拒答子集</td></tr>
+      <tr><td><strong>误答率</strong>（应拒答却作答）</td><td class="num">≤ 8%</td><td>单独报告——最危险的失败模式</td></tr>
+      <tr><td><strong>缓存误命中率</strong></td><td class="num">≤ 0.5%</td><td>按周抽检命中样本</td></tr>
+      <tr><td><strong>指标抽取准确率</strong></td><td class="num">≥ 95%</td><td>人工核对 50 条；未达标则不开放 SQL 路径</td></tr>
+    </tbody>
+  </table></div>
+  <p><strong>辅助与工程指标</strong>——用于归因和容量规划，不单独作为验收门槛：</p>
+  <div class="tw"><table>
+    <thead><tr><th>维度</th><th>指标</th><th class="num">目标值</th><th>验收方式</th></tr></thead>
+    <tbody>
+      <tr><td>检索质量</td><td>Recall@5</td><td class="num">≥ 85%</td><td>评估集离线跑分</td></tr>
+      <tr><td>生成质量</td><td>Faithfulness（忠实度）</td><td class="num">≥ 0.88</td><td>RAGAS，仅用于定位生成环节问题</td></tr>
+      <tr><td>响应性能</td><td>P95 首 token</td><td class="num">≤ 2.5 s</td><td>Langfuse 统计</td></tr>
+      <tr><td>响应性能</td><td>P95 完整回答（RAG 分支）</td><td class="num">≤ 8 s</td><td>Langfuse 统计</td></tr>
+      <tr><td>成本</td><td>单次问答平均成本</td><td class="num">≤ ¥0.01 <span class="pill p-ok">已实测</span></td><td>M2 实测 ¥0.0026–0.0033，目标据此收紧</td></tr>
+      <tr><td>成本</td><td>语义缓存命中率</td><td class="num">≥ 25%</td><td>Redis 命中统计</td></tr>
+      <tr><td>入库吞吐</td><td>200 页年报端到端入库</td><td class="num">≤ 8 min</td><td>Worker 任务耗时</td></tr>
+    </tbody>
+  </table></div>
+  <div class="note note-ok">
+    <span class="tag">成本：估算 ¥0.03 → 实测 ¥0.003</span>
+    <p>原估算担心「父子块还原 + top-5 父块」会把输入推到 6–10k token，实际 M2 实测
+    单次输入 3.0–4.1k token，成本 <strong>¥0.0026–0.0033，比估算低约一个数量级</strong>。
+    原因是父块还原带了 token 预算裁剪与按 parent_uid 去重，上下文没有预想中膨胀。
+    目标据此收紧至 ¥0.01，保留约三倍余量给后续的重排与 Agent 多步调用。</p>
+    <p>这正是为什么估算值不能留在验收标准里：<strong>偏差方向和幅度都无法靠推理得出</strong>。
+    M5 接入 Agent 后成本结构会再变一次，届时需要重新实测。</p>
+  </div>
+</section>
+
+<!-- ══════════ 02 ══════════ -->
+<section id="s2">
+  <div class="sec-head"><div class="sec-num">02</div><h2 class="sec-title">使用场景全扫</h2></div>
+  <p>设计前先把系统会被怎么用列全，包括异常路径。后续每条路径都要在测试矩阵中有对应用例。</p>
+
+  <h3>2.1 正常路径</h3>
+  <div class="tw"><table>
+    <thead><tr><th style="width:3rem" class="num">#</th><th>路径</th><th>触发分支</th><th>关键设计点</th></tr></thead>
+    <tbody>
+      <tr><td class="num">P1</td><td>管理员上传年报 PDF → 后台解析入库 → 查看状态变为 ready</td><td>离线</td><td>异步任务、状态机、幂等</td></tr>
+      <tr><td class="num">P2</td><td>提问单跳事实：「比亚迪 2024 年研发投入是多少」</td><td>RAG</td><td>向量召回 + 引用定位</td></tr>
+      <tr><td class="num">P3</td><td>提问表格数值：「列出宁德时代 2024 年分季度营收」</td><td>RAG</td><td>表格块不切断、父块还原</td></tr>
+      <tr><td class="num">P4</td><td>多轮追问：「那它的毛利率呢」（指代上一轮公司）</td><td>RAG</td><td>指代消解、会话记忆</td></tr>
+      <tr><td class="num">P5</td><td>跨公司对比：「对比茅台和五粮液近三年毛利率」</td><td>Agent</td><td>多次检索 + 计算 + 绘图</td></tr>
+      <tr><td class="num">P6</td><td>结构化查询：「营收超 500 亿且净利率大于 20% 的公司」</td><td>Agent</td><td>Text2SQL + 结果校验</td></tr>
+      <tr><td class="num">P7</td><td>请求投资建议：「茅台现在值得买吗」</td><td>Agent + HITL</td><td>中断等待人工确认</td></tr>
+      <tr><td class="num">P8</td><td>重复/相似提问</td><td>缓存</td><td>精确缓存 + 语义缓存两级</td></tr>
+    </tbody>
+  </table></div>
+
+  <h3>2.2 异常与边界路径</h3>
+  <div class="tw"><table>
+    <thead><tr><th style="width:3rem" class="num">#</th><th>场景</th><th>期望行为</th></tr></thead>
+    <tbody>
+      <tr><td class="num">E1</td><td>问题在文档中无依据（如问 2026 年预测）</td><td>明确拒答并说明原因，不编造</td></tr>
+      <tr><td class="num">E2</td><td>检索结果相关度全部低于阈值</td><td>触发一次 query 改写重试；仍失败则拒答</td></tr>
+      <tr><td class="num">E3</td><td>问的公司尚未入库</td><td>告知未收录，列出已收录公司范围</td></tr>
+      <tr><td class="num">E4</td><td>主模型超时 / 限流</td><td>自动切备用 Provider，用户无感</td></tr>
+      <tr><td class="num">E5</td><td>Rerank 服务不可用</td><td>跳过重排降级运行，响应标记 degraded</td></tr>
+      <tr><td class="num">E6</td><td>Agent 工具连续失败</td><td>换工具或用已有信息作答，标注信息不完整</td></tr>
+      <tr><td class="num">E7</td><td>Agent 达到最大步数</td><td>强制收敛作答，不无限循环</td></tr>
+      <tr><td class="num">E8</td><td>PDF 解析失败（加密 / 纯扫描件）</td><td>状态置 failed 并记录原因，不阻塞其他文档</td></tr>
+      <tr><td class="num">E9</td><td>同一文档重复上传</td><td>内容 hash 命中则跳过，不重复消耗 embedding</td></tr>
+      <tr><td class="num">E10</td><td>SSE 连接中途断开</td><td>Checkpoint 已落库，重连可续；成本照常计入</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<!-- ══════════ 03 ══════════ -->
+<section id="s3">
+  <div class="sec-head"><div class="sec-num">03</div><h2 class="sec-title">系统上下文</h2></div>
+  <p>FinCopilot 作为一个整体，与外部世界的交互边界。</p>
+
+<pre>
+                    ┌──────────────┐        ┌──────────────┐
+                    │   使用者      │        │   管理员      │
+                    │ 提问 / 追问   │        │ 上传 / 重建索引│
+                    └──────┬───────┘        └──────┬───────┘
+                           │  HTTPS / SSE          │  HTTPS
+                           ▼                       ▼
+          ┌────────────────────────────────────────────────────┐
+          │                  <b>FinCopilot</b>                        │
+          │      问答编排 · 检索 · Agent · 评估 · 可观测          │
+          └───┬────────────┬─────────────┬──────────────┬───────┘
+              │            │             │              │
+      模型推理 │     向量检索│      数据存储│       链路上报│
+              ▼            ▼             ▼              ▼
+     ┌────────────┐ ┌───────────┐ ┌────────────┐ ┌───────────┐
+     │ 模型服务    │ │  Milvus   │ │ PostgreSQL │ │ Langfuse  │
+     │ 百炼/DeepSeek│ │Zilliz Cloud│ │   Redis    │ │  Cloud    │
+     │ 火山/vLLM   │ └───────────┘ └────────────┘ └───────────┘
+     └────────────┘
+              ▲
+              │ 语料来源（离线批量获取，非运行时依赖）
+     ┌────────┴──────────────────────────┐
+     │ 巨潮资讯网 年报 PDF · AKShare 财务指标 │
+     └───────────────────────────────────┘
+</pre>
+
+  <div class="note">
+    <span class="tag">依赖分级</span>
+    <p><strong>强依赖</strong>（挂了服务不可用）：模型服务、Milvus、PostgreSQL。
+    <strong>弱依赖</strong>（挂了降级运行）：Redis（缓存失效但可用）、Langfuse（丢观测数据不影响响应）。
+    <strong>离线依赖</strong>（运行时无关）：语料源站点。</p>
+  </div>
+</section>
+
+<!-- ══════════ 04 ══════════ -->
+<section id="s4">
+  <div class="sec-head"><div class="sec-num">04</div><h2 class="sec-title">架构总览</h2></div>
+
+  <h3>4.1 分层视图</h3>
+  <div class="arch">
+    <div class="layer">
+      <div class="layer-tag">接入</div>
+      <div class="boxes">
+        <div class="box"><b>Chainlit UI</b><span>对话 / 引用展示</span></div>
+        <div class="box"><b>FastAPI</b><span>REST + SSE 流式</span></div>
+        <div class="box"><b>Admin API</b><span>文档管理 / 评估触发</span></div>
+      </div>
+    </div>
+    <div class="flowarrow">▼</div>
+    <div class="layer">
+      <div class="layer-tag">编排</div>
+      <div class="boxes">
+        <div class="box box-accent"><b>LangGraph 主图</b><span>路由 · 状态机 · 条件边</span></div>
+        <div class="box box-accent"><b>Checkpointer</b><span>Postgres 持久化 · 断点续跑</span></div>
+        <div class="box box-accent"><b>Interrupt</b><span>HITL 人工确认</span></div>
+      </div>
+    </div>
+    <div class="flowarrow">▼</div>
+    <div class="layer">
+      <div class="layer-tag">能力</div>
+      <div class="boxes">
+        <div class="box"><b>RAG 引擎</b><span>改写 · 混检 · 重排 · 父块还原</span></div>
+        <div class="box"><b>工具集</b><span>retrieve / sql / calc / plot</span></div>
+        <div class="box"><b>记忆</b><span>会话短期 · 用户长期</span></div>
+        <div class="box box-signal"><b>护栏</b><span>步数 · 白名单 · 输出校验</span></div>
+      </div>
+    </div>
+    <div class="flowarrow">▼</div>
+    <div class="layer">
+      <div class="layer-tag">模型</div>
+      <div class="boxes">
+        <div class="box"><b>Provider Registry</b><span>OpenAI 兼容统一接入</span></div>
+        <div class="box"><b>成本路由</b><span>简单→轻模型 复杂→强模型</span></div>
+        <div class="box"><b>降级重试</b><span>超时/限流自动切备用</span></div>
+      </div>
+    </div>
+    <div class="flowarrow">▼</div>
+    <div class="layer">
+      <div class="layer-tag">存储</div>
+      <div class="boxes">
+        <div class="box"><b>Milvus</b><span>dense + sparse 混合索引</span></div>
+        <div class="box"><b>PostgreSQL</b><span>元数据 · 指标 · 评估 · checkpoint</span></div>
+        <div class="box"><b>Redis</b><span>缓存 · 会话 · 限流 · 任务队列</span></div>
+      </div>
+    </div>
+    <div class="flowarrow">▼</div>
+    <div class="layer">
+      <div class="layer-tag">观测</div>
+      <div class="boxes">
+        <div class="box"><b>Langfuse</b><span>trace · token · 成本 · 延迟</span></div>
+        <div class="box"><b>RAGAS 评估</b><span>离线跑分 · 回归对比</span></div>
+        <div class="box"><b>实验开关</b><span>配置驱动消融</span></div>
+      </div>
+    </div>
+  </div>
+
+  <h3>4.2 进程形态：单体、双角色</h3>
+  <p>
+    同一份代码、同一个镜像，通过启动命令区分两种角色。在线请求与离线解析互不阻塞，
+    但部署单元仍然只有一个，避免个人项目背上微服务的运维成本。
+  </p>
+<pre>
+<i># 同一镜像，两种启动方式</i>
+<b>API 角色</b>    uvicorn app.main:app     <i>处理在线问答，无重任务</i>
+<b>Worker 角色</b> arq app.worker.Settings   <i>消费文档解析队列，CPU 密集</i>
+
+任务投递：API 收到上传 → 写 documents 表(status=pending) → Redis 入队 → 立即返回
+         Worker 消费 → 解析/分块/向量化 → 更新 status → API 侧轮询或 SSE 推送进度
+</pre>
+  <div class="note note-ok">
+    <span class="tag">这个选择的价值</span>
+    <p>面试被问「为什么不拆微服务」时，这是一个有依据的回答：负载特征不同（在线 IO 密集 / 离线 CPU 密集）所以要隔离，
+    但服务边界尚未稳定、团队只有一人，拆分带来的分布式复杂度大于收益。物理同构保留了后续独立扩缩的可能。</p>
+  </div>
+</section>
+
+<!-- ══════════ 05 ══════════ -->
+<section id="s5">
+  <div class="sec-head"><div class="sec-num">05</div><h2 class="sec-title">组件设计</h2></div>
+
+  <h3>5.1 代码结构</h3>
+<pre>
+fincopilot/
+├── app/
+│   ├── main.py                 <i>FastAPI 入口，生命周期管理</i>
+│   ├── worker.py               <i>arq worker 入口</i>
+│   ├── api/
+│   │   ├── chat.py             <i>POST /chat, /chat/stream</i>
+│   │   ├── documents.py        <i>上传 / 列表 / 重建索引</i>
+│   │   ├── eval.py             <i>触发评估、查结果</i>
+│   │   └── health.py           <i>/healthz /readyz</i>
+│   ├── graph/
+│   │   ├── state.py            <b>GraphState 定义</b>
+│   │   ├── build.py            <i>图装配（节点 + 条件边）</i>
+│   │   ├── nodes/
+│   │   │   ├── guard.py        <i>输入校验、限流、敏感词</i>
+│   │   │   ├── cache.py        <i>两级缓存查询与写入</i>
+│   │   │   ├── rewrite.py      <i>指代消解 + HyDE（可开关）</i>
+│   │   │   ├── router.py       <i>chat / rag / agent 三分支</i>
+│   │   │   ├── retrieve.py     <i>混合检索 → 重排 → 父块还原</i>
+│   │   │   ├── grade.py        <i>相关度打分，决定重试或拒答</i>
+│   │   │   ├── generate.py     <i>带引用生成</i>
+│   │   │   ├── agent.py        <i>ReAct 循环节点</i>
+│   │   │   └── verify.py       <i>引用核验、输出结构校验</i>
+│   │   └── guards.py           <i>步数上限、工具白名单</i>
+│   ├── rag/
+│   │   ├── loaders.py          <i>PDF → 结构化 Markdown</i>
+│   │   ├── chunkers/           <b>fixed | recursive | heading 三策略</b>
+│   │   ├── indexer.py          <i>入库流水线编排</i>
+│   │   └── retrievers.py       <i>Milvus hybrid + rerank 组装</i>
+│   ├── tools/
+│   │   ├── retrieve_report.py
+│   │   ├── query_financials.py <i>Text2SQL，只读、白名单表</i>
+│   │   ├── calculate.py
+│   │   └── plot_chart.py
+│   ├── providers/
+│   │   ├── registry.py         <b>模型配置表 + 工厂</b>
+│   │   ├── routing.py          <i>成本路由</i>
+│   │   └── resilience.py       <i>重试、超时、熔断、降级</i>
+│   ├── store/
+│   │   ├── milvus.py  pg.py  redis.py
+│   ├── memory/
+│   │   ├── session.py          <i>最近 N 轮</i>
+│   │   └── profile.py          <i>长期偏好（关注公司、口径）</i>
+│   ├── observability/
+│   │   ├── tracing.py          <i>Langfuse callback handler</i>
+│   │   └── cost.py             <i>token → 人民币折算</i>
+│   ├── config/
+│   │   ├── settings.py         <i>pydantic-settings</i>
+│   │   └── experiment.py       <b>实验开关加载</b>
+│   └── schemas/                <i>Pydantic 请求/响应模型</i>
+├── eval/
+│   ├── datasets/*.jsonl        <b>人工标注评估集</b>
+│   ├── run.py                  <i>python -m eval.run --exp exp03</i>
+│   ├── metrics.py              <i>RAGAS + 自定义</i>
+│   └── reports/                <i>自动生成的 Markdown 报告</i>
+├── configs/
+│   ├── settings.yaml
+│   ├── models.yaml             <i>Provider 与价格表</i>
+│   └── experiments/*.yaml      <b>每组消融一个 profile</b>
+├── frontend/app.py             <i>Chainlit</i>
+├── migrations/                 <i>Alembic</i>
+├── tests/
+├── docker-compose.yml
+└── Dockerfile
+</pre>
+
+  <h3>5.2 LangGraph 状态定义</h3>
+<pre>
+<b>class GraphState(TypedDict):</b>
+    <i># ── 会话上下文 ──</i>
+    conv_id: str
+    trace_id: str
+    messages: Annotated[list[BaseMessage], add_messages]
+
+    <i># ── 查询处理 ──</i>
+    question: str                  <i>原始提问</i>
+    rewritten: str | None          <i>改写后（指代消解 / HyDE）</i>
+    route: Literal["chat","rag","agent"]
+    filters: dict                  <i>公司、年份等结构化过滤条件</i>
+
+    <i># ── 检索结果 ──</i>
+    retrieved: list[RetrievedChunk]
+    citations: list[Citation]
+    relevance: float               <i>grade 节点打分</i>
+    retry_count: int               <i>改写重试次数，上限 1</i>
+
+    <i># ── Agent 执行 ──</i>
+    tool_calls: int                <i>已执行步数</i>
+    tool_errors: int
+    scratchpad: list[dict]
+
+    <i># ── 输出 ──</i>
+    answer: str
+    refused: bool
+    refuse_reason: str | None
+    needs_approval: bool           <u>触发 interrupt()</u>
+    degraded: list[str]            <i>降级项，如 ["rerank_skipped"]</i>
+    usage: TokenUsage
+</pre>
+
+  <h3>5.3 主图拓扑</h3>
+<pre>
+              START
+                │
+          <b>guard_in</b>  <i>限流 / 长度 / 注入检测</i>
+                │
+         <b>cache_lookup</b> ──[命中]──▶ END
+                │ 未命中
+            <b>rewrite</b>  <i>指代消解（多轮必做）+ HyDE（可开关）</i>
+                │
+             <b>router</b>  <i>结构化输出判定分支</i>
+        ┌───────┼────────────────┐
+     chat│    rag│            agent│
+        │       ▼                 ▼
+        │   <b>retrieve</b>           <b>agent_step</b> ◀──┐
+        │       │                 │          │
+        │    <b>grade</b>          <b>tool_exec</b> ──────┘ 循环
+        │   ┌───┴────┐            │  guard: tool_calls &lt; MAX_STEPS
+        │   │低相关度 │            │        tool_errors &lt; MAX_ERRORS
+        │   ▼        ▼            ▼
+        │ <b>rewrite</b>   <b>generate</b>    <b>synthesize</b>
+        │ (仅1次)     │              │
+        │   │        └──────┬───────┘
+        │   ▼ 仍低           ▼
+        │ <b>refuse</b>       <b>verify</b>  <i>引用核验 · 结构校验 · 审批判定</i>
+        │   │               │
+        │   │        ┌──────┴──────┐
+        │   │   需审批│             │正常
+        │   │        ▼             ▼
+        │   │   <u>interrupt()</u>   <b>cache_write</b>
+        │   │        │             │
+        └───┴────────┴──────┬──────┘
+                            ▼
+                        <b>guard_out</b>
+                            │
+                           END
+</pre>
+
+  <h3>5.4 Provider 抽象层</h3>
+  <p>
+    百炼、DeepSeek、火山方舟、vLLM 全部提供 OpenAI 兼容端点。因此抽象层<strong>不是类继承体系，而是一张配置表加一个工厂函数</strong>——
+    这是刻意的克制：能用配置解决的，不引入代码抽象。
+  </p>
+<pre>
+<i># configs/models.yaml</i>
+profiles:
+  strong:      { provider: bailian,  model: qwen3-max,        price_in: 0.0024, price_out: 0.0096 }
+  light:       { provider: deepseek, model: deepseek-chat,    price_in: 0.0005, price_out: 0.0015 }
+  router:      { provider: vllm,     model: qwen3-1.7b-lora,  price_in: 0,      price_out: 0 }
+  embed:       { provider: bailian,  model: text-embedding-v4, dim: 1024 }
+  rerank:      { provider: bailian,  model: gte-rerank-v2 }
+fallback:
+  strong: [light]          <i>主模型不可用时的降级顺序</i>
+  light:  [strong]
+
+<i># app/providers/registry.py — 核心就这几行</i>
+<b>def get_chat(profile: str) -> BaseChatModel:</b>
+    p = MODELS[profile]
+    return ChatOpenAI(
+        model=p.model, base_url=p.base_url, api_key=os.environ[p.api_key_env],
+        timeout=p.timeout, max_retries=0,        <u>重试交给 resilience 层统一处理</u>
+        callbacks=[langfuse_handler],
+    )
+</pre>
+  <div class="note">
+    <span class="tag">决策阶梯的产物</span>
+    <p>最初的设计是 <code>ChatProvider</code> 抽象基类 + 四个子类。审查时发现：四家的差异只有 base_url、模型名、价格三项，
+    没有任何行为差异。于是砍掉继承树，退化为配置表。<strong>少写的那三百行代码，是设计成果而不是偷懒。</strong></p>
+  </div>
+
+  <h3>5.5 工具集定义</h3>
+  <div class="tw"><table>
+    <thead><tr><th>工具</th><th>签名</th><th>约束</th></tr></thead>
+    <tbody>
+      <tr><td><code>retrieve_report</code></td><td>(company, year, query) → chunks[]</td><td>复用 RAG 检索链；单次最多返回 8 块</td></tr>
+      <tr><td><code>query_financials</code></td><td>(sql) → rows[]</td><td>只读连接、表白名单、禁 DDL/DML、LIMIT 强制注入、超时 5s</td></tr>
+      <tr><td><code>calculate</code></td><td>(expression) → number</td><td>受限表达式求值，禁任意代码执行</td></tr>
+      <tr><td><code>plot_chart</code></td><td>(series, type) → image_url</td><td>服务端渲染 PNG，不回传代码</td></tr>
+    </tbody>
+  </table></div>
+  <div class="note note-key">
+    <span class="tag">安全红线</span>
+    <p>Text2SQL 是这个系统唯一真正危险的能力。三重防护缺一不可：<strong>独立只读数据库账号</strong>（权限层）、
+    <strong>SQL 解析后校验表名与语句类型</strong>（语法层）、<strong>强制 LIMIT 与执行超时</strong>（资源层）。
+    只靠 prompt 约束模型「请不要删表」是不可接受的设计。</p>
+  </div>
+</section>
+
+<!-- ══════════ 06 ══════════ -->
+<section id="s6">
+  <div class="sec-head"><div class="sec-num">06</div><h2 class="sec-title">核心流程</h2></div>
+
+  <h3>6.1 离线入库</h3>
+  <ol class="steps">
+    <li data-n="1"><div class="step-body"><b>接收与去重</b>
+      <span>计算文件 SHA-256，命中 <code>documents.content_hash</code> 则直接返回已有 doc_id，不重复处理。写入记录，状态 <code>pending</code>，投递队列。</span></div></li>
+    <li data-n="2"><div class="step-body"><b>解析</b>
+      <span>PDF → 结构化 Markdown，保留标题层级与表格边界。表格单独提取为独立单元，不与正文混排。
+      <strong>三类表格必须专门处理：跨页表格需回补表头、合并单元格需展开、表头单位需下沉到每行</strong>。状态 <code>parsing</code>。</span></div></li>
+    <li data-n="3"><div class="step-body"><b>分块</b>
+      <span>按配置的策略切分（<span class="mono">heading</span> 为默认）。每块生成父子两级：父块保留完整小节，子块为检索粒度。每块拼接标题路径前缀，使孤立块也具备上下文。</span></div></li>
+    <li data-n="4"><div class="step-body"><b>元数据抽取（含量纲与口径）</b>
+      <span>基础项：公司代码、报告年度、章节路径、页码区间、块类型。
+      <strong>表格块额外抽取四项结构化元数据：<code>unit</code>（元/万元/亿元）、<code>currency</code>、<code>period</code>（报告期）、<code>statement_type</code>（报表类型）</strong>。
+      这些既是检索过滤条件，也是生成阶段防止单位与口径错配的依据。</span></div></li>
+    <li data-n="5"><div class="step-body"><b>向量化</b>
+      <span>子块批量送 embedding（批大小 64，失败指数退避重试 3 次）。状态 <code>embedding</code>。</span></div></li>
+    <li data-n="6"><div class="step-body"><b>双写</b>
+      <span>向量 + 标量字段写 Milvus；原文与结构关系写 PostgreSQL。<strong>先写 PG 再写 Milvus</strong>，失败时以 PG 为准做补偿重建。</span></div></li>
+    <li data-n="7"><div class="step-body"><b>指标抽取与质量校验</b>
+      <span>从表格块提取标准财务指标入 <code>financial_metrics</code>，供 Text2SQL 使用。
+      每条记录必须保留<strong>来源回链</strong>（doc_id + page + chunk_uid）与<strong>抽取置信度</strong>；
+      并与 AKShare 的同期公开指标做交叉校验，不一致的记录标记为待核。抽取失败不影响文档可用。</span></div></li>
+    <li data-n="8"><div class="step-body"><b>完成</b>
+      <span>状态置 <code>ready</code>，记录块数、token 数、耗时、embedding 成本。</span></div></li>
+  </ol>
+
+  <div class="note note-key">
+    <span class="tag">表格才是真正的难点</span>
+    <p>「表格不切断」只解决了问题的一小部分。中文年报数值问答的实际瓶颈是另外三个，且都不是分块能解决的：</p>
+    <p><strong>① 量纲混用</strong>——同一份年报中「元 / 万元 / 亿元」并存，常见做法是表头标单位、数据行不标，
+    分块后单位信息与数据分离，模型直接读出错误量级。<br>
+    <strong>② 科目口径</strong>——「营业收入」与「营业总收入」是两个科目，「净利润」与「归属于母公司股东的净利润」也不同。
+    检索命中了正确的表却取错行，答案照样是错的。<br>
+    <strong>③ 跨页与合并单元格</strong>——长表跨页后表头丢失，合并单元格解析后行列错位。</p>
+    <p>应对方式是把单位与口径<strong>结构化为元数据而非留在文本里</strong>（步骤 4），并在生成阶段强制模型声明单位与科目全称（§6.2 步骤 9）。
+    这一块做扎实，是本项目最能讲出细节、也最难被同类项目复制的部分——英文 10-K 场景基本遇不到这些问题。</p>
+  </div>
+
+  <div class="note note-key">
+    <span class="tag">结构化指标是一个静默错误源</span>
+    <p>从年报表格抽取指标入库，抽取过程本身会出错。而错误的结构化数据一旦走 Text2SQL 路径，
+    会产出<strong>看起来精确的错误数字</strong>——比检索幻觉更难察觉，因为它带着数据库查询的权威外观。</p>
+    <p>因此三重防护：<strong>来源回链</strong>（每条指标可定位到原文页）、<strong>外部交叉校验</strong>（与 AKShare 公开指标比对）、
+    <strong>上线前抽样验证</strong>（人工核对 50 条，测出抽取准确率并写入文档）。
+    抽取准确率低于 95% 时，不开放 SQL 查询路径——宁可少一条能力，不可给出权威的错误答案。</p>
+  </div>
+
+  <div class="note">
+    <span class="tag">增量更新</span>
+    <p>文档内容变化时对比 hash：整体不变跳过；变化则按块级 hash 比对，只重算变动块，其余向量保留。
+    这一步在 0→1 阶段可以简化为「全量重建」，但接口要留好，这是 M6 的优化项。</p>
+  </div>
+
+  <h3>6.2 在线问答（RAG 分支）</h3>
+  <ol class="steps">
+    <li data-n="1"><div class="step-body"><b>入口护栏</b><span>限流（每用户每分钟 N 次）、长度截断、提示注入模式检测。</span></div></li>
+    <li data-n="2"><div class="step-body"><b>缓存查询（含实体硬约束）</b>
+      <span>一级：问题归一化后 hash 精确匹配。二级：先抽取实体三元组（公司代码集合、报告期集合、指标类型），
+      <strong>三元组必须完全一致</strong>，才允许在 <code>query_cache</code> 中做向量相似度匹配（阈值 0.97）。命中则标记 <code>cached</code> 返回。</span></div></li>
+    <li data-n="3"><div class="step-body"><b>查询改写</b>
+      <span>多轮场景做指代消解（「它」→ 具体公司）；同时抽取结构化过滤条件（公司、年份）供检索使用。HyDE 作为可开关项参与消融实验。</span></div></li>
+    <li data-n="4"><div class="step-body"><b>路由（保守兜底）</b>
+      <span>轻量模型结构化输出判定 chat / rag / agent，同时输出置信度。
+      <strong>置信度低于阈值时默认走 agent</strong>——agent 能力是 rag 的超集，判错的代价只是多花成本，反向判错则会直接答错。</span></div></li>
+    <li data-n="5"><div class="step-body"><b>混合检索</b>
+      <span>Milvus 同时执行 dense 向量检索与 sparse（BM25）检索，RRF 融合，各取 top-20。标量条件下推到检索层，不做后置过滤。</span></div></li>
+    <li data-n="6"><div class="step-body"><b>重排</b><span>Rerank 模型对 40 个候选打分，取 top-5。服务不可用时跳过，标记 degraded。</span></div></li>
+    <li data-n="7"><div class="step-body"><b>父块还原（去重 + 预算裁剪）</b>
+      <span>将命中的子块替换为其父块。<strong>多个子块常同属一个父块，必须按 <code>parent_uid</code> 去重</strong>，否则上下文重复、成本翻倍。
+      去重后按 token 预算截断，保留重排分数最高的父块；表格类父块优先保留完整，不做中途截断。</span></div></li>
+    <li data-n="8"><div class="step-body"><b>相关度判定</b>
+      <span>低于阈值：触发一次改写重试；仍低于阈值则进入拒答分支，明确告知「已检索的文档中没有找到依据」。</span></div></li>
+    <li data-n="9"><div class="step-body"><b>带引用生成</b>
+      <span>Prompt 强制要求每个事实性陈述标注来源编号，<strong>数值类回答必须同时声明单位与科目全称</strong>（如「营业总收入，单位：人民币亿元」）。
+      流式输出，先推 <code>citation</code> 事件再推正文 token。</span></div></li>
+    <li data-n="10"><div class="step-body"><b>核验与落库</b>
+      <span>校验引用编号均存在且未越界；写缓存；上报 Langfuse（各阶段耗时、token、成本）。</span></div></li>
+  </ol>
+
+  <div class="note note-key">
+    <span class="tag">为什么语义缓存必须加实体硬约束</span>
+    <p>在财报领域，下面两个问题的向量相似度<strong>几乎必然超过 0.96</strong>：</p>
+    <p><code>"茅台 2023 年营业收入是多少"</code> 与 <code>"茅台 2024 年营业收入是多少"</code></p>
+    <p>仅差一个数字，嵌入模型无法有效区分。同类情形还有「茅台 vs 五粮液」「营业收入 vs 营业总收入」。
+    一旦错误命中，系统会返回一个<strong>精确、自信且完全错误的数字，并且毫无察觉</strong>——
+    这比生成式幻觉危险得多，因为链路追踪也看不出异常。</p>
+    <p>因此缓存键的结构是 <code>(公司集合, 报告期集合, 指标类型)</code> 必须精确相等，
+    向量相似度只用于匹配问法差异。实体不一致即判定未命中，无论相似度多高。
+    上线后需按周抽检缓存命中样本，统计<strong>误命中率</strong>并纳入指标体系。</p>
+  </div>
+
+  <h3>6.3 Agent 分支</h3>
+<pre>
+问：「对比茅台和五粮液 2022–2024 年毛利率趋势」
+
+<b>step 1</b>  retrieve_report(600519, 2024, "毛利率")     → 命中利润表小节
+<b>step 2</b>  retrieve_report(000858, 2024, "毛利率")     → 命中利润表小节
+<b>step 3</b>  query_financials("SELECT ... WHERE company_code IN (...)")
+                                                     → 结构化三年数据
+<b>step 4</b>  calculate("(营收-成本)/营收")              → 逐年毛利率
+<b>step 5</b>  plot_chart(series, "line")                → 趋势图 URL
+<b>synthesize</b> 汇总为结论 + 数据表 + 图表 + 逐条引用
+
+<u>护栏</u>  MAX_STEPS=8 · MAX_TOOL_ERRORS=3 · 单工具超时 10s · 总预算 ¥0.15
+        触及任一上限 → 用已有信息强制作答，并在回答中标注「分析未完成的部分」
+</pre>
+
+  <h3>6.4 人工确认（HITL）</h3>
+  <p>
+    当 <code>verify</code> 节点识别出输出属于投资建议类内容时，置 <code>needs_approval=true</code> 并调用 <code>interrupt()</code>。
+    图状态由 Checkpointer 落库，SSE 推送 <code>interrupt</code> 事件，前端展示待确认内容与免责说明。
+    用户确认后以 <code>Command(resume=...)</code> 恢复执行；拒绝则转为中性信息陈述。
+  </p>
+  <div class="note note-ok">
+    <span class="tag">为什么这个场景值得做</span>
+    <p>HITL 常被做成硬凑的演示功能。但金融场景下「AI 不得直接输出投资建议」是真实合规要求，
+    中断点的存在有业务理由而非技术炫技——这使它成为一个能讲清楚的设计，而不是一个可有可无的开关。</p>
+  </div>
+</section>
+
+<!-- ══════════ 07 ══════════ -->
+<section id="s7">
+  <div class="sec-head"><div class="sec-num">07</div><h2 class="sec-title">数据模型</h2></div>
+
+  <h3>7.1 PostgreSQL</h3>
+<pre>
+<b>documents</b>            <i>文档主表</i>
+  id            BIGSERIAL PK
+  doc_key       TEXT UNIQUE        <i>600519_2024_annual</i>
+  company_code  TEXT NOT NULL
+  company_name  TEXT NOT NULL
+  report_year   INT  NOT NULL
+  report_type   TEXT NOT NULL      <i>annual | h1 | q1 | q3</i>
+  file_path     TEXT NOT NULL
+  content_hash  CHAR(64) NOT NULL  <u>幂等去重依据</u>
+  page_count    INT
+  status        TEXT NOT NULL      <i>pending→parsing→chunking→embedding→ready | failed</i>
+  error_code    TEXT
+  chunk_count   INT
+  index_cost    NUMERIC(10,4)      <i>本次入库 embedding 花费</i>
+  created_at / updated_at TIMESTAMPTZ
+
+<b>chunks</b>               <i>块表，向量不在此处</i>
+  id            BIGSERIAL PK
+  chunk_uid     TEXT UNIQUE        <u>与 Milvus 主键一致</u>
+  doc_id        BIGINT FK → documents(id) ON DELETE CASCADE
+  parent_uid    TEXT               <i>NULL 表示自身为父块</i>
+  level         SMALLINT           <i>0=父 1=子</i>
+  chunk_type    TEXT               <i>text | table</i>
+  heading_path  TEXT               <i>第三节 管理层讨论 &gt; 二、主营业务分析</i>
+  page_start / page_end  INT
+  token_count   INT
+  content       TEXT NOT NULL
+  strategy      TEXT               <u>fixed|recursive|heading — 消融实验隔离用</u>
+  <u>-- 表格块专属元数据（chunk_type='table' 时必填）--</u>
+  unit          TEXT               <i>元 | 万元 | 亿元 — 防止量级错读</i>
+  currency      TEXT               <i>CNY | USD</i>
+  period        TEXT               <i>FY2024 | H1-2024 — 报告期</i>
+  statement_type TEXT              <i>balance | income | cashflow | other</i>
+  table_flags   TEXT[]             <i>cross_page | merged_cell — 解析风险标记</i>
+  INDEX (doc_id), INDEX (parent_uid), INDEX (strategy)
+
+<b>financial_metrics</b>    <i>结构化指标，Text2SQL 的数据源</i>
+  company_code · report_year · period · metric_code  UNIQUE
+  metric_name   TEXT               <u>存科目全称，不存简称 — 防口径混淆</u>
+  value         NUMERIC(20,4)
+  unit          TEXT               <u>统一归一后存储，原始单位另存</u>
+  raw_unit      TEXT               <i>抽取时的原始单位，供追溯</i>
+  <u>-- 质量保障字段，缺一不可 --</u>
+  source_doc_id BIGINT FK → documents(id)
+  source_page   INT                <u>回链：可定位到原文页</u>
+  source_chunk_uid TEXT            <u>回链：可定位到具体表格块</u>
+  confidence    NUMERIC(4,3)       <i>抽取置信度</i>
+  verify_status TEXT               <i>unverified | cross_checked | mismatch | manual_ok</i>
+  verify_source TEXT               <i>交叉校验来源，如 akshare</i>
+
+<b>conversations</b> / <b>messages</b>
+  messages 额外记录：trace_id · route · cost · latency_ms · degraded · cached
+
+<b>eval_datasets</b> / <b>eval_items</b>
+  eval_items: question · ground_truth · expected_doc_keys TEXT[]
+              category(fact|table|multihop|refuse) · difficulty
+
+<b>eval_runs</b> / <b>eval_results</b>
+  eval_runs:   exp_name · config_snapshot JSONB · git_sha · started_at · finished_at
+  eval_results: run_id · item_id · answer · retrieved_uids TEXT[]
+                recall_at_k · faithfulness · answer_relevancy · latency_ms · cost
+  <u>评估结果入库而非只写文件——这样才能画出指标随时间的趋势线</u>
+
+<b>checkpoints</b>          <i>LangGraph PostgresSaver 自动建表，不手工维护</i>
+</pre>
+
+  <h3>7.2 Milvus Collection</h3>
+<pre>
+collection: <b>fin_chunks</b>
+  chunk_uid      VARCHAR(128)  PRIMARY KEY
+  dense_vector   FLOAT_VECTOR(1024)         <i>text-embedding-v4 / bge-m3</i>
+  sparse_vector  SPARSE_FLOAT_VECTOR        <u>Milvus BM25 Function 自动生成</u>
+  content        VARCHAR(8192)
+  doc_key        VARCHAR(64)      <i>标量过滤</i>
+  company_code   VARCHAR(16)      <i>标量过滤</i>
+  report_year    INT32            <i>标量过滤</i>
+  chunk_type     VARCHAR(16)      <i>标量过滤：text | table</i>
+  statement_type VARCHAR(16)      <i>标量过滤：按报表类型精确定位</i>
+  period         VARCHAR(16)      <i>标量过滤：报告期</i>
+  unit           VARCHAR(8)       <i>随块返回，生成阶段用于单位校验</i>
+  strategy       VARCHAR(16)      <i>消融隔离</i>
+  heading_path   VARCHAR(512)
+  page_start     INT32
+  parent_uid     VARCHAR(128)
+
+index:  HNSW  M=16  efConstruction=200  metric=COSINE
+search: efSearch=64 · hybrid(dense + sparse) · RRF ranker k=60
+
+collection: <b>query_cache</b>    <i>语义缓存独立集合</i>
+  cache_key      VARCHAR(64) PK
+  vector         FLOAT_VECTOR(1024)
+  answer_json    VARCHAR(16384)
+  <u>-- 实体硬约束字段：必须精确相等才允许向量匹配 --</u>
+  <u>entity_key     VARCHAR(256)     公司集合+报告期集合+指标类型 的规范化串</u>
+  exp_id         VARCHAR(32)      <i>实验隔离，防止跨实验污染</i>
+  hit_count      INT32 · created_at INT64
+
+检索条件： entity_key == 查询实体串  AND  exp_id == 当前实验  AND  相似度 ≥ 0.97
+</pre>
+  <div class="note">
+    <span class="tag">为何 sparse 向量交给 Milvus</span>
+    <p>BM25 完全可以自己实现或用 <code>rank_bm25</code> 库在内存中做，但那样会引入「两套索引各自维护、增量更新不同步」的一致性问题。
+    Milvus 内置的 BM25 Function 让稀疏向量随写入自动生成，与 dense 向量同生命周期。<strong>这是一致性考量，不是省事。</strong></p>
+  </div>
+
+  <h3>7.3 Redis 键设计</h3>
+  <div class="tw"><table>
+    <thead><tr><th>键</th><th>类型</th><th>TTL</th><th>用途</th></tr></thead>
+    <tbody>
+      <tr><td><code>cache:exact:{exp}:{hash}</code></td><td>String</td><td>24h</td><td>精确问题缓存</td></tr>
+      <tr><td><code>sess:{conv_id}</code></td><td>List</td><td>2h</td><td>最近 N 轮对话，供指代消解</td></tr>
+      <tr><td><code>lock:ingest:{doc_key}</code></td><td>String</td><td>30m</td><td>入库任务互斥，防重复处理</td></tr>
+      <tr><td><code>rl:{user}:{minute}</code></td><td>String</td><td>60s</td><td>请求限流计数</td></tr>
+      <tr><td><code>arq:queue</code></td><td>—</td><td>—</td><td>离线任务队列</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<!-- ══════════ 08 ══════════ -->
+<section id="s8">
+  <div class="sec-head"><div class="sec-num">08</div><h2 class="sec-title">接口契约</h2></div>
+
+  <h3>8.1 REST 接口</h3>
+  <div class="tw"><table>
+    <thead><tr><th>方法与路径</th><th>说明</th><th>关键字段</th></tr></thead>
+    <tbody>
+      <tr><td><code>POST /api/v1/chat/stream</code></td><td>流式问答（主入口）</td><td>conv_id, question, exp_id?</td></tr>
+      <tr><td><code>POST /api/v1/chat</code></td><td>非流式，供评估脚本调用</td><td>同上</td></tr>
+      <tr><td><code>POST /api/v1/chat/resume</code></td><td>HITL 恢复执行</td><td>conv_id, approved, note?</td></tr>
+      <tr><td><code>GET /api/v1/conversations/{id}</code></td><td>历史消息与引用</td><td>—</td></tr>
+      <tr><td><code>POST /api/v1/documents</code></td><td>上传文档，异步入库</td><td>file, company_code, year, type</td></tr>
+      <tr><td><code>GET /api/v1/documents</code></td><td>列表与入库状态</td><td>status?, company?</td></tr>
+      <tr><td><code>POST /api/v1/documents/{id}/reindex</code></td><td>指定策略重建索引</td><td>strategy</td></tr>
+      <tr><td><code>POST /api/v1/eval/runs</code></td><td>触发一次评估</td><td>dataset, exp_id</td></tr>
+      <tr><td><code>GET /api/v1/eval/runs/{id}</code></td><td>评估结果与报告</td><td>—</td></tr>
+      <tr><td><code>GET /healthz</code> · <code>/readyz</code></td><td>存活 / 就绪探针</td><td>readyz 检查三个存储连通性</td></tr>
+    </tbody>
+  </table></div>
+
+  <h3>8.2 SSE 事件协议</h3>
+  <p>流式响应不只推文本 token。推送执行过程让 Agent 的多步推理对用户可见，也是调试时最有用的信息来源。</p>
+<pre>
+event: <b>meta</b>        {"conv_id":"...","trace_id":"..."}
+event: <b>route</b>       {"branch":"agent"}
+event: <b>step</b>        {"n":1,"node":"retrieve","tool":"retrieve_report","status":"running"}
+event: <b>step</b>        {"n":1,"status":"done","elapsed_ms":820}
+event: <b>citation</b>    {"idx":1,"doc":"贵州茅台 2024 年报","page":48,
+                     "heading":"第三节 &gt; 二、主营业务分析","snippet":"..."}
+event: <b>token</b>       {"text":"2024 年公司"}
+event: <b>interrupt</b>   {"reason":"investment_advice","draft":"...","need":"user_approval"}
+event: <b>done</b>        {"usage":{"in":3820,"out":412},"cost_cny":0.0231,
+                     "latency_ms":4310,"cached":false,"degraded":[]}
+event: <b>error</b>       {"code":"FC-3001","message":"模型响应超时，已切换备用模型重试"}
+</pre>
+
+  <h3>8.3 错误码</h3>
+  <div class="tw"><table>
+    <thead><tr><th>码</th><th>含义</th><th>对用户的表达</th><th>系统行为</th></tr></thead>
+    <tbody>
+      <tr><td><code>FC-1001</code></td><td>文档解析失败</td><td>该文件无法解析，可能是扫描件</td><td>状态 failed，不重试</td></tr>
+      <tr><td><code>FC-1002</code></td><td>向量化失败</td><td>入库中断，稍后自动重试</td><td>退避重试 3 次</td></tr>
+      <tr><td><code>FC-2001</code></td><td>检索结果为空</td><td>未收录相关内容，当前已收录 N 家公司</td><td>不调用生成模型，省成本</td></tr>
+      <tr><td><code>FC-2002</code></td><td>相关度不足</td><td>文档中没有找到可支撑的依据</td><td>拒答，计入拒答指标</td></tr>
+      <tr><td><code>FC-3001</code></td><td>模型超时</td><td>（用户无感）</td><td>切备用 Provider</td></tr>
+      <tr><td><code>FC-3002</code></td><td>模型限流</td><td>（用户无感）</td><td>退避重试后切备用</td></tr>
+      <tr><td><code>FC-4001</code></td><td>工具执行失败</td><td>部分数据获取失败，结论基于已有信息</td><td>告知 Agent，允许换工具</td></tr>
+      <tr><td><code>FC-4002</code></td><td>超出最大步数</td><td>分析较复杂，以下是已完成部分</td><td>强制收敛作答</td></tr>
+      <tr><td><code>FC-5001</code></td><td>触发限流</td><td>请求过于频繁，请稍候</td><td>429</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<!-- ══════════ 09 ══════════ -->
+<section id="s9">
+  <div class="sec-head"><div class="sec-num">09</div><h2 class="sec-title">配置与实验开关</h2></div>
+  <p>
+    消融实验是这个项目的核心方法论，因此<strong>所有可对比的技术选择都必须是配置项，而不是代码分支</strong>。
+    一组配置就是一次实验，实验 ID 贯穿检索隔离、缓存隔离与评估记录。
+  </p>
+<pre>
+<i># configs/experiments/exp04_rerank.yaml</i>
+exp_id: exp04_rerank
+description: 在混合检索基础上加入重排
+
+chunking:
+  strategy: heading          <i>fixed | recursive | heading</i>
+  chunk_size: 512
+  overlap: 64
+  parent_child: true
+  table_atomic: true         <i>表格不跨块切分</i>
+  table_metadata: true       <u>抽取 unit/currency/period/statement_type 为结构化元数据</u>
+  cross_page_merge: true     <i>跨页表格合并并回补表头</i>
+
+retrieval:
+  mode: hybrid               <i>dense | sparse | hybrid</i>
+  top_k_dense: 20
+  top_k_sparse: 20
+  fusion: rrf
+  filters_pushdown: true     <i>标量条件下推到 Milvus</i>
+
+rerank:
+  enabled: true
+  model: gte-rerank-v2
+  top_n: 5
+
+query_transform:
+  coref_resolution: true     <i>多轮指代消解，始终开启</i>
+  hyde: false
+  decompose: false           <i>复杂问题拆解</i>
+
+parent_expansion:
+  enabled: true
+  dedup_by_parent: true      <u>多子块命中同一父块时去重，否则上下文重复、成本翻倍</u>
+  token_budget: 6000         <i>去重后按重排分数保留，超预算截断</i>
+  keep_table_intact: true    <i>表格类父块不中途截断</i>
+
+generation:
+  profile: strong
+  require_citation: true
+  require_unit_declaration: true   <u>数值回答必须声明单位与科目全称</u>
+  relevance_threshold: 0.35
+  max_retry_on_low_relevance: 1
+
+cache:
+  exact: true
+  semantic: true
+  similarity_threshold: 0.97
+  entity_constraint: strict  <u>公司/报告期/指标三元组必须精确相等才允许语义匹配</u>
+  audit_sample_rate: 0.05    <i>抽样审计命中样本，统计误命中率</i>
+
+router:
+  profile: light
+  confidence_threshold: 0.7
+  fallback_branch: agent     <u>低置信度走 agent（能力超集），判错代价仅为成本</u>
+
+agent:
+  max_steps: 8
+  max_tool_errors: 3
+  budget_cny: 0.15
+
+eval:
+  dataset: v1                <i>320 条</i>
+  bootstrap_rounds: 1000     <u>报告 95% 置信区间而非点估计</u>
+  judge_profile: cross_vendor <u>judge 模型与生成模型不同厂商，规避自我偏好偏差</u>
+  numeric_tolerance: 0.005   <i>数值题 ±0.5% 容差</i>
+  stratified_report: true    <i>按题目类别分层报告，避免稀释</i>
+</pre>
+  <div class="note note-key">
+    <span class="tag">实验隔离</span>
+    <p><code>exp_id</code> 同时写入 Milvus 的 <code>strategy</code> 字段、缓存键前缀和 <code>eval_runs</code> 记录。
+    这意味着不同分块策略的向量共存于同一集合而互不干扰，切换实验不需要重建整个索引，
+    也不会出现「上一组实验的缓存污染这一组结果」这种会让整张指标表作废的错误。</p>
+  </div>
+</section>
+
+<!-- ══════════ 10 ══════════ -->
+<section id="s10">
+  <div class="sec-head"><div class="sec-num">10</div><h2 class="sec-title">非功能设计</h2></div>
+
+  <h3>10.1 降级矩阵</h3>
+  <div class="tw"><table>
+    <thead><tr><th>故障</th><th>检测</th><th>降级动作</th><th>用户感知</th></tr></thead>
+    <tbody>
+      <tr><td>主模型超时</td><td>请求超时 30s</td><td>切 fallback profile 重试一次</td><td>延迟增加，内容正常</td></tr>
+      <tr><td>主模型限流</td><td>429</td><td>退避 1s/2s/4s，仍失败则切备用</td><td>无感</td></tr>
+      <tr><td>Rerank 不可用</td><td>超时 / 5xx</td><td>跳过重排，取向量 top-5</td><td>标记 degraded，质量略降</td></tr>
+      <tr><td>Redis 不可用</td><td>连接异常</td><td>缓存与会话降级为内存，限流放行</td><td>成本上升，功能正常</td></tr>
+      <tr><td>Milvus 不可用</td><td>连接异常</td><td><strong>不降级</strong>，返回明确错误</td><td>明确告知服务不可用</td></tr>
+      <tr><td>Langfuse 不可用</td><td>上报失败</td><td>本地落盘，异步补传</td><td>无感</td></tr>
+      <tr><td>工具失败</td><td>异常 / 超时</td><td>错误回传 Agent，允许换工具，累计 3 次终止</td><td>回答标注信息不完整</td></tr>
+    </tbody>
+  </table></div>
+  <div class="note">
+    <span class="tag">一条原则</span>
+    <p>降级的边界是<strong>绝不用降低可信度的方式换取可用性</strong>。检索失败时宁可报错，也不能让模型脱离文档自由发挥——
+    那会产出看起来正常、实则编造的答案，比明确失败危险得多。</p>
+  </div>
+
+  <h3>10.2 成本控制</h3>
+  <div class="tw"><table>
+    <thead><tr><th>手段</th><th>机制</th><th>预期效果</th></tr></thead>
+    <tbody>
+      <tr><td>两级缓存</td><td>精确 hash + 语义相似（阈值 0.96）</td><td>命中率 ≥ 25%，命中请求成本归零</td></tr>
+      <tr><td>模型路由</td><td>路由与改写走轻模型或微调小模型，仅最终生成走强模型</td><td>单次成本下降约 30%</td></tr>
+      <tr><td>空检索短路</td><td>检索为空时不调用生成模型</td><td>无效请求零成本</td></tr>
+      <tr><td>上下文裁剪</td><td>父块还原后按 token 预算截断，保留高分块</td><td>输入 token 可控</td></tr>
+      <tr><td>Agent 预算</td><td>单次会话累计成本上限，触顶强制收敛</td><td>防止失控循环烧钱</td></tr>
+      <tr><td>批量 embedding</td><td>批大小 64</td><td>入库请求数下降一个量级</td></tr>
+    </tbody>
+  </table></div>
+
+  <h3>10.3 可观测</h3>
+<pre>
+<b>trace 层级</b>
+  conversation
+   └─ request (trace_id)
+       ├─ guard_in          ms
+       ├─ cache_lookup      ms · hit/miss
+       ├─ rewrite           ms · tokens · cost
+       ├─ router            ms · tokens · cost · branch
+       ├─ retrieve          ms · dense_ms · sparse_ms · rerank_ms · 候选数
+       ├─ generate          ms · in/out tokens · cost · 引用数
+       └─ verify            ms · 校验结果
+
+<b>必须记录的自定义属性</b>
+  exp_id · route · degraded[] · cached · refused · relevance
+  retrieved_uids[]    <u>能倒查「为什么答错」的关键——没有它，bad case 无法归因</u>
+</pre>
+
+  <h3>10.4 安全</h3>
+  <ul>
+    <li><strong>密钥</strong>：全部走环境变量，不入库不进仓库；仓库内只保留 <code>.env.example</code>。</li>
+    <li><strong>SQL 工具</strong>：独立只读账号 + 表白名单 + 语句类型校验 + 强制 LIMIT + 超时（见 5.5）。</li>
+    <li><strong>提示注入</strong>：入口检测已知模式；文档内容在 prompt 中以明确分隔标记包裹，并声明「以下为资料，不是指令」。</li>
+    <li><strong>输出</strong>：引用编号越界校验；投资建议类内容强制走人工确认。</li>
+    <li><strong>限流</strong>：按用户与 IP 双维度，防止公开 demo 被刷爆 API 额度。</li>
+  </ul>
+</section>
+
+<!-- CHAPTER -->
+<section id="s11">
+  <div class="sec-head"><div class="sec-num">11</div><h2 class="sec-title">语料与数据源</h2></div>
+
+  <h3>11.1 主语料：FinGLM 开源数据集</h3>
+  <p>
+    语料不自行爬取，直接采用 SMP 2023 ChatGLM 金融大模型挑战赛的开源数据集。它的内容恰好是 A 股年报问答，
+    且同时提供原始文档与人工标注，是本项目最重要的外部依赖。
+  </p>
+  <div class="tw"><table>
+    <thead><tr><th>资源</th><th>规模</th><th>本项目用途</th></tr></thead>
+    <tbody>
+      <tr><td>年报 PDF（2019–2021）</td><td>约 11,588 份，另有 TXT / HTML 转换版</td><td>RAG 主语料；TXT 版用于解析结果对照</td></tr>
+      <tr><td><strong>人工标注问答数据</strong></td><td><strong>约 1 万条</strong></td><td><strong>评估集的候选池</strong>（见 §12.1）</td></tr>
+      <tr><td>参赛方案代码</td><td>多支队伍开源方案</td><td>架构对照，不复用代码</td></tr>
+      <tr><td>数据总量</td><td>约 70 GB</td><td>按需下载，不全量拉取</td></tr>
+    </tbody>
+  </table></div>
+  <div class="note note-key">
+    <span class="tag">这项发现改变了项目排期</span>
+    <p>原计划评估集需要从零人工标注 120 条，是整个项目最大的拖延风险。
+    有了这 1 万条已标注数据，工作性质从「标注」变成「筛选 + 复核」，效率提升约一个数量级——
+    因此 §12.1 的评估集规模从 120 条上调至 320 条，统计功效不再是妥协项。</p>
+  </div>
+
+  <h3>11.2 补充数据源</h3>
+  <div class="tw"><table>
+    <thead><tr><th>来源</th><th>获取方式</th><th>用途</th></tr></thead>
+    <tbody>
+      <tr><td>AKShare</td><td>Python 库</td><td>补充近年年报公告、结构化财务指标，供 <code>financial_metrics</code> 表交叉校验</td></tr>
+      <tr><td>巨潮资讯网</td><td>官方披露平台</td><td>指定公司年份的原始 PDF 补齐</td></tr>
+      <tr><td>Tushare</td><td>Python 接口</td><td>备选财务数据源</td></tr>
+    </tbody>
+  </table></div>
+  <p>
+    AKShare 同时覆盖本项目两条数据链路：年报 PDF 走 RAG，结构化财务指标进 <code>financial_metrics</code> 表走 Text2SQL。
+    后者的另一重价值是<strong>作为指标抽取质量的独立校验基准</strong>（见 §6.1 步骤 7）。
+  </p>
+
+  <h3>11.3 语料选取策略</h3>
+<pre>
+<b>规模</b>    15–20 家公司 × 近三年年报 ≈ 50 份文档
+<b>取样</b>    覆盖不同行业（制造 / 消费 / 金融 / 科技），因为不同行业的
+         报表科目与表格结构差异显著，单一行业会让分块策略过拟合
+<b>扩展</b>    M4 消融实验若发现结论受语料规模影响，再按需扩至 50 家
+
+<u>不全量入库的理由：11,588 份文档的 embedding 成本与入库时间会拖垮 M1，
+而评估集所需的证据文档远少于此。语料规模不是本项目要证明的能力。</u>
+</pre>
+
+  <h3>11.4 方法论参考</h3>
+  <p>以下数据集不直接使用，但其问题设计与标注格式值得对照，尤其是表格类问题的组织方式。</p>
+  <div class="tw"><table>
+    <thead><tr><th>数据集</th><th>规模</th><th>可借鉴之处</th></tr></thead>
+    <tbody>
+      <tr><td>FinanceBench</td><td>10,231 题，含 150 题人工标注子集</td><td>每题带<strong>支撑证据</strong>，与本项目「答案 + 出处页码」格式一致</td></tr>
+      <tr><td>FinQA</td><td>8,281 条专家标注</td><td>带<strong>推理程序标注</strong>，对应多跳类题目的设计</td></tr>
+      <tr><td>TAT-QA</td><td>16,552 题 / 2,757 个混合上下文</td><td>每个上下文为「一张表 + 至少两段说明文字」，<strong>与年报结构完全一致</strong></td></tr>
+    </tbody>
+  </table></div>
+  <div class="note">
+    <span class="tag">开源同类项目</span>
+    <p>GitHub 上「LangGraph + RAG + 10-K + RAGAS」组合的项目已有相当数量。
+    这些项目用于<strong>架构对照</strong>——看模块如何切分、state 如何设计、评估如何组织——但不复用代码：
+    抄来的实现无法支撑面试追问，且会让本项目失去唯一真正的差异化（见 §1.1）。</p>
+  </div>
+</section>
+
+<!-- CHAPTER -->
+<section id="s12">
+  <div class="sec-head"><div class="sec-num">12</div><h2 class="sec-title">评估体系</h2></div>
+  <p>这是整个项目区别于演示级 demo 的地方，也是所有优化决策的依据。<strong>评估集必须先于优化建立。</strong></p>
+
+  <h3>12.1 评估集构成</h3>
+  <p>
+    基于 FinGLM 的 1 万条人工标注筛选并复核而成，共 <strong>320 条</strong>。
+    规模的确定不是拍脑袋——见下方统计功效说明。
+  </p>
+  <div class="tw"><table>
+    <thead><tr><th>类别</th><th class="num">数量</th><th>考察能力</th><th>标注要求</th></tr></thead>
+    <tbody>
+      <tr><td>单跳事实</td><td class="num">120</td><td>基础召回与生成</td><td>标准答案 + 应命中文档与页码</td></tr>
+      <tr><td><strong>表格数值</strong></td><td class="num"><strong>100</strong></td><td>表格解析、<strong>单位归一、科目口径</strong></td><td>精确数值 + <strong>单位 + 科目全称</strong> + 页码</td></tr>
+      <tr><td>多跳推理</td><td class="num">60</td><td>改写、多轮检索、计算</td><td>推理路径 + 最终答案</td></tr>
+      <tr><td>应拒答</td><td class="num">40</td><td>幻觉控制</td><td>标注「无依据」及原因</td></tr>
+      <tr><td colspan="2"><strong>合计 320 条</strong></td><td colspan="2">全部经人工复核，不接受未复核的模型生成或原始标注</td></tr>
+    </tbody>
+  </table></div>
+
+  <div class="note note-key">
+    <span class="tag">为什么是 320 而不是 120</span>
+    <p>原定 120 条的设计前提是「全靠手工标注」，这个约束已随 FinGLM 标注池的引入而消失。
+    而 120 条存在实打实的统计功效问题：拒答子集仅 20 条时，指标粒度是 5 个百分点，
+    <strong>单条题目的翻转就等于 5 个点的波动</strong>；单跳 60 条时，Recall@5 从 85% 到 89% 只相当于 2.4 条题的差别，
+    不具备统计显著性。</p>
+    <p>实验记录表要承载 8 行以上的对比数据，若每行的误差带都大于行间差异，整张表在方法上不成立。
+    <strong>因此所有指标必须以 bootstrap 95% 置信区间报告，而非点估计</strong>（见 §12.4）。</p>
+  </div>
+
+  <div class="note note-key">
+    <span class="tag">落地现状（2026-10-05）· 设计与实际的差异</span>
+    <p><strong>实际建成 v2：182 条 / 12 家公司。</strong>与上面的设计有四处偏离，每一处都有来由：</p>
+    <table style="margin:.6em 0">
+      <thead><tr><th>设计</th><th>实际</th><th>原因</th></tr></thead>
+      <tbody>
+        <tr><td>基于 FinGLM 标注池筛选</td><td>从年报「主要会计数据」表自动抽取</td><td>FinGLM 的标注与本项目的语料不是同一批文档，页码依据对不上，无法支撑页码级召回</td></tr>
+        <tr><td>四类：事实 / 表格 / 多跳 / 拒答</td><td>五类，新增<strong>口径辨析</strong>（合并 vs 母公司）</td><td>M5 发现两张报表解析出的块逐字相同（ADR-019）。这是差异化的直接考点，并入表格类会被稀释</td></tr>
+        <tr><td>320 条</td><td>182 条</td><td>招商银行 / 中国平安 / 中国石油三家的表格抽取失效（P1-5），这三家一道题都出不来——<strong>语料覆盖 12 家，评估只覆盖 9 家</strong></td></tr>
+        <tr><td>全部人工复核</td><td>124 条自动生成，<strong>分层抽检 20 条</strong></td><td>每条抽取值都回到原始页面文本独立对账（ADR-021）。抽检 20/20 正确，但只覆盖 16%，错误率上界约 15%</td></tr>
+      </tbody>
+    </table>
+    <p><strong>中途还换过一次评估集，代价是 22.6 个点。</strong>先前的 v1 只有 61 条 / 2 家公司，
+    在上面连续两次满分——而同一套代码跑 v2 只有 74.7%。
+    那 22.6 点就是「对着 61 道题调了六轮提示词」的过拟合代价。
+    <strong>这也是为什么当时拒绝把满分写成「系统准确率 100%」</strong>（见 open-issues P0-1）。</p>
+  </div>
+
+  <p>
+    表格数值类从 20 条提升到 100 条，是因为它同时是本项目的<strong>核心难点与差异化所在</strong>（见 §1.1）。
+    该子集需进一步按难度分层标注：单表直读、跨页表格、合并单元格、需单位换算、易混科目，各约 20 条，
+    这样才能定位到底是哪一类失败。
+  </p>
+
+  <h3>12.2 指标：主指标与辅助指标</h3>
+  <div class="note note-key">
+    <span class="tag">一个必须纠正的设计错误</span>
+    <p>Recall、Faithfulness、Answer Relevancy <strong>全部是代理指标</strong>。
+    Faithfulness 高只说明「模型忠实复述了检索结果」——若检索回来的是错误段落，模型忠实地引用它，
+    Faithfulness 依然很高，而答案是错的。<strong>把代理指标当验收标准，会系统性地高估系统质量。</strong></p>
+    <p>财报数值问答恰恰具有唯一正确答案，这是本选题最大的优势。因此引入<strong>端到端答案正确率</strong>作为主指标，
+    RAGAS 系列降为辅助指标。</p>
+  </div>
+
+  <h4>主指标 — 端到端答案正确率</h4>
+  <div class="tw"><table>
+    <thead><tr><th>指标</th><th>定义</th><th>判定方式</th></tr></thead>
+    <tbody>
+      <tr><td><strong>数值准确率</strong></td><td>数值类问题答对的比例</td><td><strong>单位归一后按 ±0.5% 容差匹配</strong>；单位或科目错即判错</td></tr>
+      <tr><td><strong>事实准确率</strong></td><td>非数值事实类问题答对的比例</td><td>关键实体与结论的精确匹配，人工制定判定规则</td></tr>
+      <tr><td><strong>拒答准确率</strong></td><td>应拒答且实际拒答 ÷ 应拒答总数</td><td>确定性判定，无需模型参与</td></tr>
+      <tr><td><strong>误答率</strong></td><td>应拒答却给出了答案的比例</td><td>与拒答准确率互补，但单独报告——这是最危险的失败模式</td></tr>
+    </tbody>
+  </table></div>
+  <p>
+    主指标的三个优势：<strong>不依赖 LLM-as-judge，因此没有评判噪声；成本近似为零；对外表述无需解释</strong>——
+    「数值题准确率 82%」任何人都懂，「Faithfulness 0.86」需要解释半天。
+    更关键的是，它能直接暴露单位换算、科目错配这类真实缺陷，而 Faithfulness 对此完全不敏感。
+  </p>
+
+  <h4>辅助指标 — 用于归因，不用于验收</h4>
+  <div class="tw"><table>
+    <thead><tr><th>层</th><th>指标</th><th>作用</th></tr></thead>
+    <tbody>
+      <tr><td rowspan="3">检索</td><td>Recall@5</td><td>答案错误时，判断是召回问题还是生成问题</td></tr>
+      <tr><td>MRR</td><td>衡量正确证据的排序位置</td></tr>
+      <tr><td>Context Precision</td><td>上下文噪声比例，与成本直接相关</td></tr>
+      <tr><td rowspan="2">生成</td><td>Faithfulness（RAGAS）</td><td>检索正确但答案错误时，定位生成环节问题</td></tr>
+      <tr><td>Answer Relevancy（RAGAS）</td><td>答非所问的检出</td></tr>
+      <tr><td rowspan="4">工程</td><td>P95 首 token / 完整回答</td><td>延迟分布</td></tr>
+      <tr><td>单次成本</td><td>token × 单价，人民币</td></tr>
+      <tr><td>缓存命中率 / <strong>缓存误命中率</strong></td><td>后者需人工抽检，见 §6.2 步骤 2</td></tr>
+      <tr><td>Agent 平均步数</td><td>工具调用次数均值</td></tr>
+    </tbody>
+  </table></div>
+
+  <div class="note">
+    <span class="tag">RAGAS 自身的成本与噪声</span>
+    <p>RAGAS 的每个指标都是 LLM-as-judge，跑 320 条 × 多指标，其调用量可能达到主流程的 5–10 倍，
+    <strong>这笔成本必须单独计入预算</strong>（见 §14.6）。此外，用同一个模型既生成又评判存在自我偏好偏差，
+    因此 judge 模型固定选用与生成模型不同的厂商，并在报告中注明。</p>
+  </div>
+
+  <h3>12.3 实验设计</h3>
+  <div class="note note-key">
+    <span class="tag">顺序叠加的陷阱</span>
+    <p>逐项累加式消融（<code>exp01 → exp08</code>）存在<strong>路径依赖</strong>：分块策略的最优选择，
+    是在「无重排」条件下得出的，未必在「有重排」条件下依然成立——重排能挽回一部分召回损失，
+    可能把分块策略的差异抹平。<strong>顺序叠加只能得到一条路径上的局部结果，不足以支撑「A 策略优于 B 策略」这类普遍结论。</strong></p>
+    <p>因此实验分三阶段：顺序消融摸方向，交叉实验验因子独立性，逆向消融算边际贡献。</p>
+  </div>
+
+  <h4>阶段一 · 顺序消融（摸方向）</h4>
+  <div class="tw"><table>
+    <thead><tr><th>实验</th><th>变更</th><th class="num">数值准确率</th><th class="num">Recall@5</th><th class="num">忠实度</th><th class="num">P95</th><th class="num">成本</th></tr></thead>
+    <tbody>
+      <tr><td><code>exp01</code></td><td>基线：纯向量检索 + 固定分块</td><td class="num">—</td><td class="num">—</td><td class="num">—</td><td class="num">—</td><td class="num">—</td></tr>
+      <tr><td><code>exp02</code></td><td>分块策略改为按标题层级</td><td class="num">—</td><td class="num">—</td><td class="num">—</td><td class="num">—</td><td class="num">—</td></tr>
+      <tr><td><code>exp03</code></td><td>加入混合检索（+ BM25）</td><td class="num">—</td><td class="num">—</td><td class="num">—</td><td class="num">—</td><td class="num">—</td></tr>
+      <tr><td><code>exp04</code></td><td>加入重排</td><td class="num">—</td><td class="num">—</td><td class="num">—</td><td class="num">—</td><td class="num">—</td></tr>
+      <tr><td><code>exp05</code></td><td>父子块还原</td><td class="num">—</td><td class="num">—</td><td class="num">—</td><td class="num">—</td><td class="num">—</td></tr>
+      <tr><td><code>exp06</code></td><td><strong>表格元数据（单位/科目/期间）入检索</strong></td><td class="num">—</td><td class="num">—</td><td class="num">—</td><td class="num">—</td><td class="num">—</td></tr>
+      <tr><td><code>exp07</code></td><td>查询改写 / HyDE</td><td class="num">—</td><td class="num">—</td><td class="num">—</td><td class="num">—</td><td class="num">—</td></tr>
+      <tr><td><code>exp08</code></td><td>两级缓存 + 模型路由</td><td class="num">—</td><td class="num">—</td><td class="num">—</td><td class="num">—</td><td class="num">—</td></tr>
+      <tr><td><code>exp09</code></td><td>LlamaIndex 同配置对照组</td><td class="num">—</td><td class="num">—</td><td class="num">—</td><td class="num">—</td><td class="num">—</td></tr>
+    </tbody>
+  </table></div>
+  <p>每行必须带 95% 置信区间，格式如 <code>82.4% [78.1, 86.2]</code>。逐行累积，不允许事后补写。</p>
+
+  <h4>阶段二 · 交叉实验（验因子独立性）</h4>
+  <p>对最可能相互作用的两个因子做 2×2 全组合，确认结论不依赖另一因子的取值：</p>
+<pre>
+                   <b>无 Rerank</b>        <b>有 Rerank</b>
+  <b>fixed 分块</b>        exp-A            exp-B
+  <b>heading 分块</b>      exp-C            exp-D
+
+判读：若 (C−A) 与 (D−B) 方向一致且幅度接近 → 分块策略的收益独立于重排，结论可推广
+      若 (D−B) 显著小于 (C−A)            → 重排已覆盖分块带来的大部分收益
+                                          <u>此时应重新考虑是否值得维护复杂的分块逻辑</u>
+</pre>
+
+  <h4>阶段三 · 逆向消融（算边际贡献）</h4>
+  <p>从最终全量配置出发，<strong>逐个移除单项</strong>，观察指标下降幅度。这才是「哪个改动真正有用」的答案——顺序叠加给不出这个结论。</p>
+  <div class="tw"><table>
+    <thead><tr><th>移除项</th><th class="num">数值准确率变化</th><th class="num">成本变化</th><th>保留判断</th></tr></thead>
+    <tbody>
+      <tr><td>− 重排</td><td class="num">—</td><td class="num">—</td><td>—</td></tr>
+      <tr><td>− 混合检索（仅 dense）</td><td class="num">—</td><td class="num">—</td><td>—</td></tr>
+      <tr><td>− 父子块还原</td><td class="num">—</td><td class="num">—</td><td>—</td></tr>
+      <tr><td>− 表格元数据</td><td class="num">—</td><td class="num">—</td><td>—</td></tr>
+      <tr><td>− 查询改写</td><td class="num">—</td><td class="num">—</td><td>—</td></tr>
+    </tbody>
+  </table></div>
+  <div class="note note-ok">
+    <span class="tag">这张表的额外价值</span>
+    <p>逆向消融可能得出「某个复杂组件的边际贡献不足 1 个百分点，但成本增加 20%」这样的结论。
+    <strong>主动砍掉这类组件，并在文档中说明理由，比堆砌功能更能体现工程判断力。</strong></p>
+  </div>
+
+  <h3>12.4 统计方法与回归机制</h3>
+<pre>
+<b>置信区间</b>  所有指标以 bootstrap 重采样 1000 次计算 95% CI，报告区间而非点估计
+           两组配置的区间重叠 → <u>不得声称有提升</u>，只能记录「无显著差异」
+
+<b>分层报告</b>  总体指标之外，按题目类别分别报告——表格类的提升可能被单跳类稀释，
+           合并报告会掩盖真实效果
+
+<b>本地全量</b>  python -m eval.run --exp exp04 --dataset v1      <i>320 条</i>
+<b>CI 冒烟</b>    python -m eval.run --exp current --dataset smoke <i>40 条，PR 触发</i>
+           主指标较主干下降超阈值 → CI 失败
+<b>产出</b>      eval/reports/{run_id}.md  +  写入 eval_results 表（含 CI 上下界）
+
+<b>成本记录</b>  每次 run 记录本次评估自身消耗的 token 与费用，与主流程成本分开统计
+</pre>
+</section>
+
+<!-- CHAPTER -->
+<section id="s13">
+  <div class="sec-head"><div class="sec-num">13</div><h2 class="sec-title">技术选型</h2></div>
+
+  <h3>13.1 选型总表</h3>
+  <div class="tw"><table>
+    <thead><tr><th>层</th><th>选择</th><th>决定理由</th><th>行业信号</th></tr></thead>
+    <tbody>
+      <tr><td>语言</td><td>Python 3.11</td><td>LLM 生态唯一现实选项；3.11 起 asyncio 性能与错误信息明显改善</td><td>★★★★★</td></tr>
+      <tr><td>Web 框架</td><td>FastAPI + Uvicorn</td><td>原生 async、Pydantic 校验、SSE 流式支持完善、自动生成 OpenAPI 文档</td><td>★★★★★</td></tr>
+      <tr><td>数据校验</td><td>Pydantic v2 + pydantic-settings</td><td>请求响应模型、LLM 结构化输出、配置加载三处复用同一套 schema</td><td>★★★★</td></tr>
+      <tr><td>RAG 框架</td><td><strong>LangChain</strong>（主）<br>LlamaIndex（对照组）</td><td>组件可插拔便于消融；生态与岗位覆盖面最广。LlamaIndex 实现同配置检索链做横向对比</td><td>★★★★★</td></tr>
+      <tr><td>Agent 编排</td><td><strong>LangGraph</strong></td><td>状态机模型，护栏、断点续跑、人工确认均有原生支持，不需自造</td><td>★★★★★</td></tr>
+      <tr><td>状态持久化</td><td>langgraph-checkpoint-postgres</td><td>官方 Checkpointer，复用已有 PostgreSQL，不引入新存储</td><td>★★★</td></tr>
+      <tr><td>向量库客户端</td><td>pymilvus</td><td>官方 SDK，支持 hybrid search 与 BM25 Function</td><td>★★★★★</td></tr>
+      <tr><td>关系库</td><td>PostgreSQL + SQLAlchemy 2.x + Alembic</td><td>asyncpg 异步驱动；Alembic 管理 schema 演进</td><td>★★★★</td></tr>
+      <tr><td>缓存与队列</td><td>Redis + arq</td><td>arq 基于 asyncio，与 FastAPI 同一并发模型，配置量远小于 Celery</td><td>★★★</td></tr>
+      <tr><td>文档解析</td><td>百炼文档解析 API + PyMuPDF</td><td>前者处理复杂版面与表格，后者做页码定位与兜底</td><td>★★★</td></tr>
+      <tr><td>SQL 安全</td><td>sqlglot</td><td>解析 AST 后校验语句类型与表名，比正则匹配可靠</td><td>★★★</td></tr>
+      <tr><td>评估</td><td>RAGAS</td><td>忠实度、答案相关性、上下文精度指标现成，不自造轮子</td><td>★★★★</td></tr>
+      <tr><td>可观测</td><td>Langfuse</td><td>对 LangChain / LangGraph 有原生 callback，开源可自部署，成本可控</td><td>★★★★</td></tr>
+      <tr><td>前端</td><td>Chainlit</td><td>Python 原生对话界面，支持流式、引用卡片、步骤展示；前端非本项目考察点</td><td>★★</td></tr>
+      <tr><td>绘图</td><td>Matplotlib</td><td>服务端渲染 PNG，不向前端下发可执行代码</td><td>★★</td></tr>
+      <tr><td>工程</td><td>Docker · GitHub Actions · pytest · ruff</td><td>容器化、CI 评估回归、异步测试、统一 lint</td><td>★★★★</td></tr>
+      <tr><td>增强项</td><td>LLaMA-Factory（LoRA）· vLLM</td><td><strong>为覆盖岗位技能要求而设，非工程必要</strong>——路由任务用规则加轻模型 API 已足够，详见 §13.2 ⑥</td><td>★★★★</td></tr>
+    </tbody>
+  </table></div>
+
+  <h3>13.2 关键分歧点</h3>
+
+  <h4>① 用框架，还是自己实现检索链</h4>
+  <p>
+    结论是<strong>能用框架就用框架</strong>。技术深度不体现在实现层——没有人会因为用了 LangChain 扣分，
+    但会因为说不清框架内部做了什么扣分。深度来自三件事：<strong>组件选型的依据、参数调优的数据、线上问题的归因</strong>。
+    省下的实现时间应当投入 Agent 编排与评估体系，那里的概念密度和产出价值都高得多。
+  </p>
+  <div class="note">
+    <span class="tag">配套方法</span>
+    <p>用框架而不失深度的做法是<strong>看 trace 而非读源码</strong>。Langfuse 中能看到框架实际发出的每条 prompt、
+    检索返回的原文、每步的 token 消耗，隐式行为一览无余。再对每个默认值追问一次为什么——
+    chunk_size 为何是 1024、top_k 为何是 2、阈值依据什么定——每个默认值都是一次实验机会。</p>
+  </div>
+
+  <h4>② LangChain 还是 LlamaIndex</h4>
+  <div class="tw"><table>
+    <thead><tr><th>维度</th><th>LangChain</th><th>LlamaIndex</th></tr></thead>
+    <tbody>
+      <tr><td>RAG 抽象清晰度</td><td>中</td><td><strong>高</strong>（Document → Node → Index → Retriever）</td></tr>
+      <tr><td>父子块与表格的开箱能力</td><td>需组装</td><td><strong>内置更完善</strong></td></tr>
+      <tr><td>与 LangGraph 集成</td><td><strong>同生态，无缝</strong></td><td>需适配</td></tr>
+      <tr><td>岗位要求出现频率</td><td><strong>显著更高</strong></td><td>中</td></tr>
+    </tbody>
+  </table></div>
+  <p>
+    选 LangChain 作主线是生态一致性与覆盖面的考量。但 LlamaIndex 不是弃选，而是<strong>作为对照组实现同一套检索链</strong>，
+    跑同一评估集出对比数据（实验 <code>exp08</code>）。这样「为什么选 LangChain」有数据可答，而不是只能回答「因为大家都用」。
+  </p>
+
+  <h4>③ LangGraph 还是 CrewAI / AutoGen</h4>
+  <p>
+    LangGraph 的状态机模型能精确表达本项目需要的三件事：条件路由、步数护栏、中断恢复。
+    CrewAI 与 AutoGen 侧重多智能体角色协作，抽象层级更高但可控性更弱，且 0→1 阶段不含多智能体。
+    <strong>多引入一个 Agent 框架不会带来增量的技术信号，只会扩大维护面。</strong>
+  </p>
+
+  <h4>④ arq 还是 Celery</h4>
+  <p>
+    Celery 功能更全但配置繁重，其 asyncio 支持也仍不理想。arq 基于 asyncio 与 Redis，与 FastAPI 共用同一并发模型，配置约十行。
+    本项目任务类型单一（文档解析），用不上 Celery 的路由、优先级与工作流编排能力。<strong>按决策阶梯，够用即止。</strong>
+  </p>
+
+  <h4>⑤ Chainlit 还是自建前端</h4>
+  <p>
+    前端不是考察维度，但演示效果直接影响第一印象。Chainlit 用 Python 即可实现流式对话、引用卡片、
+    Agent 步骤展示与人工确认交互，成本极低。后期若需要更强的品牌感再替换为独立前端——
+    接口协议（§8.2）已与前端实现解耦，替换不影响后端。
+  </p>
+
+  <h4>⑥ LoRA 微调 + vLLM 自托管：一个诚实的说明</h4>
+  <div class="note note-key">
+    <span class="tag">这一项的投入产出比是负的</span>
+    <p>路由与查询改写任务，用规则前置过滤加轻量模型 API 已经完全够用。自己微调一个小模型再自托管推理，
+    需要租 GPU、准备训练数据、调参、部署服务——<strong>时间与成本远大于它带来的工程收益</strong>。</p>
+    <p>它留在计划里的唯一理由是：LoRA 与 vLLM 在岗位要求中出现频率不低，纯应用型项目天然覆盖不到。
+    因此它被明确放在 v1.1 而非 0→1 范围，且在文档中直说其性质。</p>
+    <p><strong>主动说明这一判断，比假装它有技术必要性更有价值。</strong>
+    面试时能讲清「我知道这个东西在我的场景里 ROI 为负，我做它是为了补技能覆盖，
+    但如果是生产系统我不会这么选」——这是工程判断力的体现，远胜于把它包装成核心技术。</p>
+  </div>
+
+  <h3>13.3 岗位技能覆盖映射</h3>
+  <p>技术选型同时是求职覆盖面的设计。下表确认每项高频要求都有实际产出支撑，而非停留在「了解」。</p>
+  <div class="tw"><table>
+    <thead><tr><th>岗位要求</th><th>项目中的实际产出</th><th>里程碑</th></tr></thead>
+    <tbody>
+      <tr><td>Python / FastAPI / 异步编程</td><td>服务主体、SSE 流式接口、异步存储访问</td><td>M0 – M2</td></tr>
+      <tr><td>LangChain</td><td>加载、分块、检索、重排组件链</td><td>M1 – M4</td></tr>
+      <tr><td>RAG 全链路</td><td>解析 → 分块 → 向量化 → 混合检索 → 重排 → 带引用生成</td><td>M1 – M4</td></tr>
+      <tr><td>向量数据库</td><td>Milvus schema 设计、HNSW 参数、标量过滤下推、混合检索</td><td>M1</td></tr>
+      <tr><td>Prompt 工程</td><td>路由判定、引用约束、拒答策略、注入防护</td><td>全程</td></tr>
+      <tr><td>Embedding / Rerank</td><td>模型选型对比，重排开关消融实验</td><td>M4</td></tr>
+      <tr><td>LangGraph / Agent</td><td>主图拓扑、条件边、ReAct 循环、Checkpointer</td><td>M5</td></tr>
+      <tr><td>Function Calling</td><td>四个工具的 schema 设计、参数校验、失败降级</td><td>M5</td></tr>
+      <tr><td>Human-in-the-loop</td><td>投资建议类输出的中断与恢复</td><td>M5</td></tr>
+      <tr><td>模型评估</td><td>120 条评估集、RAGAS 指标、消融实验表、CI 回归</td><td>M3 – M4</td></tr>
+      <tr><td>可观测与成本</td><td>全链路 trace、token 成本核算、缓存命中率、模型路由</td><td>M0 / M6</td></tr>
+      <tr><td>多模型适配</td><td>Provider 抽象 + 三家横向评测</td><td>M6</td></tr>
+      <tr><td>Docker / CI</td><td>容器化、compose 本地环境、评估回归流水线</td><td>M0 / M6</td></tr>
+      <tr><td>LoRA 微调 / vLLM</td><td>微调路由小模型并自托管，量化成本下降幅度</td><td>v1.1</td></tr>
+      <tr><td>MCP</td><td>工具集暴露为 MCP Server</td><td>v1.1</td></tr>
+    </tbody>
+  </table></div>
+
+  <h3>13.4 主要依赖</h3>
+<pre>
+<i># 服务</i>
+fastapi · uvicorn[standard] · pydantic · pydantic-settings · sse-starlette
+
+<i># LLM 应用</i>
+langchain · langchain-openai · langchain-community
+langgraph · langgraph-checkpoint-postgres
+llama-index-core            <i>仅对照组实验使用</i>
+
+<i># 存储</i>
+pymilvus · sqlalchemy · asyncpg · alembic · redis · arq
+
+<i># 文档与工具</i>
+pymupdf · sqlglot · matplotlib
+
+<i># 评估与观测</i>
+ragas · datasets · langfuse
+
+<i># 前端</i>
+chainlit
+
+<i># 开发</i>
+pytest · pytest-asyncio · ruff · mypy
+
+<u>版本以 M0 建立 lock 文件时的稳定版为准，且必须锁定而非浮动约束——
+LangChain 生态迭代很快，一次无意的依赖升级会让此前的评估结果无法复现。</u>
+</pre>
+
+  <h3>13.5 明确不采用</h3>
+  <div class="tw"><table>
+    <thead><tr><th>不采用</th><th>原因</th></tr></thead>
+    <tbody>
+      <tr><td>自行实现检索链 / BM25</td><td>深度不在实现层；自建双索引还会带来一致性问题（见 ADR-006）</td></tr>
+      <tr><td>CrewAI / AutoGen</td><td>LangGraph 已覆盖所需能力，多一个框架不产生增量信号</td></tr>
+      <tr><td>Dify / RagFlow 作为主体</td><td>RAG 链路封装为黑盒，分块、检索、重排均不可触及——但保留作为效果对照基线（M6）</td></tr>
+      <tr><td>Pinecone</td><td>通用度与可迁移性不及 Milvus</td></tr>
+      <tr><td>pgvector 作主向量库</td><td>缺少原生混合检索，行业信号弱于 Milvus；仅作本地开发降级方案</td></tr>
+      <tr><td>Celery</td><td>配置负担与任务复杂度不匹配</td></tr>
+      <tr><td>独立前端框架</td><td>非考察维度，M6 之前不投入</td></tr>
+      <tr><td>LangSmith</td><td>与 Langfuse 能力重叠，后者开源、可自部署、成本更可控</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<!-- CHAPTER -->
+<section id="s14">
+  <div class="sec-head"><div class="sec-num">14</div><h2 class="sec-title">平台选型与成本</h2></div>
+
+  <h3>14.1 三条选型原则</h3>
+  <div class="tw"><table>
+    <thead><tr><th style="width:11rem">原则</th><th>展开</th></tr></thead>
+    <tbody>
+      <tr><td><strong>供应商数量是第一成本项</strong></td>
+        <td>每多接一个平台，就多一套注册、鉴权、配额规则、故障排查路径。目标是把账号数压到 <strong>3 个</strong>：一个模型平台、一个应用托管平台、一个可观测平台。</td></tr>
+      <tr><td><strong>付费买省事，不拼免费额度</strong></td>
+        <td>用多个免费层拼出的系统，任何一处额度耗尽整条链路就断，而且排查时分不清是代码问题还是配额问题——这是项目烂尾的典型路径。凡是会成为瓶颈的服务，直接付费。</td></tr>
+      <tr><td><strong>按信号价值分层投入</strong></td>
+        <td>模型平台、向量库、框架的选择会被反复追问，必须对齐行业主流；托管平台几乎不会被问，选最省配置时间的即可。把精力花在会被检验的地方。</td></tr>
+    </tbody>
+  </table></div>
+
+  <div class="note note-key">
+    <span class="tag">免费层的正确用法</span>
+    <p>免费层不是一律不能用，判断标准是两条：<strong>额度相对实际用量有多少倍冗余</strong>，以及<strong>用完之后是降级还是硬断</strong>。
+    冗余在十倍以上、且超额只是排队或降速的，可以放心用；冗余不足两倍、超额即拒绝服务的，一律换付费。</p>
+  </div>
+
+  <h3>14.2 各层最终选择</h3>
+  <div class="tw"><table>
+    <thead><tr><th>层</th><th>候选</th><th>选择</th><th>决定理由</th></tr></thead>
+    <tbody>
+      <tr><td>模型平台</td><td>阿里云百炼 · 火山方舟 · 百度千帆 · DeepSeek</td>
+        <td><strong>阿里云百炼</strong></td>
+        <td>一个 Key 覆盖 LLM、Embedding、Rerank、文档解析；兼容 OpenAI SDK；企业覆盖面最广</td></tr>
+      <tr><td>备用模型</td><td>—</td><td><strong>DeepSeek</strong></td>
+        <td>价格低，作为降级目标与成本路由的轻模型，同时验证 Provider 抽象确实可切换</td></tr>
+      <tr><td>向量库</td><td>Zilliz Cloud · 自建 Milvus · pgvector</td>
+        <td><strong>Zilliz Cloud</strong></td>
+        <td>Milvus 官方托管，免运维；Milvus 是行业通用选择，信号价值高于 pgvector</td></tr>
+      <tr><td>应用托管</td><td>Zeabur · Railway · Render · 阿里云 ECS/ACK</td>
+        <td><strong>Zeabur</strong></td>
+        <td>国内直连控制台、中文界面、Git push 即部署、数据库一键添加且连接串自动注入</td></tr>
+      <tr><td>PostgreSQL / Redis</td><td>独立云厂商 · 应用平台托管</td>
+        <td><strong>随 Zeabur 一并开通</strong></td>
+        <td>不新增供应商；环境变量自动注入，省掉手抄连接串与网络打通</td></tr>
+      <tr><td>可观测</td><td>Langfuse Cloud · 自部署 · LangSmith</td>
+        <td><strong>Langfuse Cloud</strong></td>
+        <td>自部署需额外拉起数据库与对象存储，与「不自建中间件」原则冲突</td></tr>
+      <tr><td>前端</td><td>Vercel · 同平台部署</td>
+        <td><strong>与后端同平台</strong></td>
+        <td>Chainlit 本身是 Python 服务，同平台部署可省一个账号与跨域配置</td></tr>
+      <tr><td>GPU（增强项）</td><td>AutoDL · 恒源云</td>
+        <td><strong>按小时租用</strong></td>
+        <td>仅 LoRA 微调与 vLLM 验证时开机，跑完即关，不常驻</td></tr>
+    </tbody>
+  </table></div>
+
+  <h3>14.3 模型平台横向对比</h3>
+  <div class="tw"><table>
+    <thead><tr><th>维度</th><th>阿里云百炼</th><th>火山方舟</th><th>百度千帆</th></tr></thead>
+    <tbody>
+      <tr><td>OpenAI SDK 兼容</td><td>是</td><td>是</td><td>部分接口自有风格</td></tr>
+      <tr><td>一个 Key 覆盖能力</td><td>LLM · Embedding · Rerank · 文档解析 · 多模态</td><td>LLM · Embedding</td><td>较全</td></tr>
+      <tr><td>价格</td><td>中</td><td>最低</td><td>中</td></tr>
+      <tr><td>企业覆盖面</td><td>最广，零售 / 互联网 / SaaS 通用</td><td>互联网、内容行业</td><td>政企、金融、传统行业</td></tr>
+      <tr><td>本项目定位</td><td><strong>主用</strong></td><td>备选，Provider 层已预留</td><td>备选，Provider 层已预留</td></tr>
+    </tbody>
+  </table></div>
+  <p>
+    三家都提供 OpenAI 兼容端点，因此 Provider 抽象层（§5.4）可以只用配置切换。
+    项目完成后会跑一组横向评测，用同一评估集对比三家在本任务上的质量与成本——这组数据本身就是交付物之一。
+  </p>
+
+  <h3>14.4 部署平台对比</h3>
+  <div class="tw"><table>
+    <thead><tr><th>平台</th><th>一键数据库</th><th>Git 自动部署</th><th>国内直连</th><th>配置负担</th></tr></thead>
+    <tbody>
+      <tr><td><strong>Zeabur</strong></td><td>是，连接串自动注入</td><td>是</td><td>是，中文界面</td><td>最低</td></tr>
+      <tr><td>Railway</td><td>是，模板最全</td><td>是</td><td>否，需代理</td><td>低</td></tr>
+      <tr><td>Render</td><td>是</td><td>是</td><td>否，需代理</td><td>低</td></tr>
+      <tr><td>阿里云 ECS / ACK</td><td>否，需自行开通与打通</td><td>需自建流水线</td><td>是</td><td><strong>最高</strong>：VPC、安全组、RAM 权限</td></tr>
+    </tbody>
+  </table></div>
+  <div class="note">
+    <span class="tag">一个容易搞反的判断</span>
+    <p>国内大厂云在这个场景反而最费时间——控制台围绕企业级运维设计，起步要先过 VPC、安全组、访问密钥几道关。
+    而<strong>部署平台是整套技术栈里唯一不会被面试追问的环节</strong>：没有人会因为 demo 跑在 Zeabur 而非 ECS 扣分，
+    但会因为没做过向量库选型、没接过主流模型平台扣分。省下的配置时间应当投到会被检验的地方。</p>
+    <p>若仍希望简历上出现主流云，可在 M6 把容器部署到阿里云 ECS 或 ACK 一次并留存记录，约一天工作量，之后可关停。</p>
+  </div>
+
+  <h3>14.5 账号与密钥清单</h3>
+<pre>
+<b>账号 1 · 阿里云百炼</b>
+  DASHSCOPE_API_KEY          <i>LLM / Embedding / Rerank / 文档解析</i>
+<b>账号 2 · Zeabur</b>（含 PostgreSQL 与 Redis）
+  DATABASE_URL               <u>添加服务后由平台自动注入，无需手填</u>
+  REDIS_URL                  <u>同上</u>
+<b>账号 3 · Langfuse Cloud</b>
+  LANGFUSE_PUBLIC_KEY / LANGFUSE_SECRET_KEY / LANGFUSE_HOST
+<b>账号 4 · Zilliz Cloud</b>（向量库，不可与上述合并）
+  ZILLIZ_URI / ZILLIZ_TOKEN
+<i>可选 · 备用模型</i>
+  DEEPSEEK_API_KEY           <i>降级目标与成本路由轻模型</i>
+
+<u>密钥一律走环境变量，仓库内只保留 .env.example，不提交任何真实值。</u>
+</pre>
+
+  <h3>14.6 成本明细</h3>
+  <div class="tw"><table>
+    <thead><tr><th>项目</th><th>计费方式</th><th class="num">月成本（估）</th><th>说明</th></tr></thead>
+    <tbody>
+      <tr><td>Zeabur（API + Worker + PG + Redis）</td><td>订阅 + 用量</td><td class="num">¥80 – 110</td><td>四个服务共用一个订阅</td></tr>
+      <tr><td>阿里云百炼</td><td>按 token 预充值</td><td class="num">¥50 – 100</td><td>首次充 ¥300，个人开发量可用 3–6 个月</td></tr>
+      <tr><td>Zilliz Cloud Serverless</td><td>按量</td><td class="num">¥0 – 40</td><td>本项目数据量小，起步额度冗余充足</td></tr>
+      <tr><td>Langfuse Cloud</td><td>按 trace 数</td><td class="num">¥0 – 210</td><td>M0–M4 起步额度足够；trace 量上来后再升档</td></tr>
+      <tr><td><strong>评估自身的模型消耗</strong></td><td>按 token</td><td class="num">¥30 – 150</td><td><strong>易被漏算</strong>：RAGAS 每个指标都是模型评判，320 题全量跑一次的调用量可达主流程 5–10 倍</td></tr>
+      <tr><td>GPU 租用（增强项）</td><td>按小时</td><td class="num">一次性 ¥20 – 50</td><td>仅 LoRA 微调与 vLLM 验证时开机</td></tr>
+      <tr><td>域名（可选）</td><td>年付</td><td class="num">¥7</td><td>不绑域名可直接用平台分配地址</td></tr>
+      <tr><td colspan="2"><strong>合计</strong></td><td class="num"><strong>¥160 – 400</strong></td><td>无任何环节会因额度耗尽而中断</td></tr>
+    </tbody>
+  </table></div>
+  <div class="note note-key">
+    <span class="tag">评估成本的控制策略</span>
+    <p>M4 消融实验密集期会连续跑十余次评估，若每次都跑 320 条全量，评估成本会超过主流程本身。
+    分层使用：<strong>日常迭代用分层抽样子集（80 条，各类别等比例）快速看方向；仅在里程碑节点与实验记录表定稿时跑全量</strong>。
+    主指标（数值/事实/拒答准确率）是确定性判定，几乎零成本，可以每次全量跑；
+    只有 RAGAS 辅助指标需要控制频率。</p>
+  </div>
+  <p>实际价格以各平台下单时页面为准，促销与续费价差异较大；国内云服务器若长期使用，务必确认第二年续费价格。</p>
+
+  <h3>14.7 开工清单</h3>
+  <ol class="steps">
+    <li data-n="1"><div class="step-body"><b>阿里云百炼</b><span>开通 → 充值 ¥300 → 复制 API Key　<span class="mono">约 10 分钟</span></span></div></li>
+    <li data-n="2"><div class="step-body"><b>Zilliz Cloud</b><span>建 Serverless 集群 → 取 URI 与 Token　<span class="mono">约 10 分钟</span></span></div></li>
+    <li data-n="3"><div class="step-body"><b>Langfuse Cloud</b><span>注册 → 建项目 → 取两个 Key　<span class="mono">约 5 分钟</span></span></div></li>
+    <li data-n="4"><div class="step-body"><b>GitHub</b><span>建仓库，推送 M0 骨架代码　<span class="mono">约 5 分钟</span></span></div></li>
+    <li data-n="5"><div class="step-body"><b>Zeabur</b><span>连接仓库 → 添加 PostgreSQL 与 Redis → 填入四个环境变量 → 部署　<span class="mono">约 15 分钟</span></span></div></li>
+    <li data-n="6"><div class="step-body"><b>验证</b><span>访问 <code>/readyz</code>，三个存储全部连通；Langfuse 中出现第一条 trace</span></div></li>
+  </ol>
+
+  <div class="note note-ok">
+    <span class="tag">一次配置，之后不再碰</span>
+    <p>以上全部完成约一小时，此后所有时间都花在检索策略、prompt、Agent 编排和读 trace 上——
+    也就是真正会被面试检验的部分。基础设施不应该再消耗注意力。</p>
+  </div>
+</section>
+
+<!-- CHAPTER -->
+<section id="s15">
+  <div class="sec-head"><div class="sec-num">15</div><h2 class="sec-title">部署架构</h2></div>
+  <div class="tw"><table>
+    <thead><tr><th>组件</th><th>部署形式</th><th>说明</th></tr></thead>
+    <tbody>
+      <tr><td>API 服务</td><td>Zeabur 容器实例</td><td><code>uvicorn app.main:app</code>；Git push 自动构建，自动 HTTPS</td></tr>
+      <tr><td>Worker</td><td>Zeabur 第二个实例，同镜像</td><td><code>arq app.worker.Settings</code>；可独立扩缩</td></tr>
+      <tr><td>PostgreSQL</td><td>Zeabur 托管</td><td><code>DATABASE_URL</code> 自动注入；Alembic 管理迁移</td></tr>
+      <tr><td>Redis</td><td>Zeabur 托管</td><td>缓存、会话、限流、任务队列共用</td></tr>
+      <tr><td>Milvus</td><td>Zilliz Cloud Serverless</td><td>外部托管，通过 URI + Token 接入</td></tr>
+      <tr><td>Langfuse</td><td>Langfuse Cloud</td><td>SDK 上报，失败本地落盘异步补传</td></tr>
+      <tr><td>模型</td><td>阿里云百炼（主）/ DeepSeek（备）</td><td>OpenAI 兼容端点，Provider 层统一接入</td></tr>
+      <tr><td>前端</td><td>Zeabur 第三个实例</td><td>Chainlit，与 API 同平台内网互通</td></tr>
+      <tr><td>本地开发</td><td>docker-compose</td><td>PG + Redis + Milvus standalone，与线上等价</td></tr>
+    </tbody>
+  </table></div>
+  <div class="note note-key">
+    <span class="tag">一条硬约束</span>
+    <p>整套系统必须能在本机 <code>docker compose up</code> 后离线跑通（模型调用除外）。
+    做不到这点，云上一出问题就只能干等，项目大概率停在那里再也不会被打开。</p>
+  </div>
+</section>
+
+<!-- CHAPTER -->
+<section id="s16">
+  <div class="sec-head"><div class="sec-num">16</div><h2 class="sec-title">里程碑拆解</h2></div>
+  <div class="ms">
+    <div class="ms-row">
+      <div class="ms-id">M0</div>
+      <div class="ms-body"><b>骨架与地基</b><span>配置体系、Provider Registry、三个存储连接、健康探针、Langfuse 接入、docker-compose、CI 骨架</span></div>
+      <div class="ms-out">可启动<br>可观测</div>
+    </div>
+    <div class="ms-row">
+      <div class="ms-id">M1</div>
+      <div class="ms-body"><b>离线入库链路</b><span>解析（含跨页表格合并、单元格展开）→ 分块（三策略）→ <strong>表格元数据抽取</strong> → 向量化 → 双写 Milvus/PG；状态机与幂等；Worker 队列</span></div>
+      <div class="ms-out">语料入库<br>状态可查</div>
+    </div>
+    <div class="ms-row">
+      <div class="ms-id">M2</div>
+      <div class="ms-body"><b>在线 RAG 与首个可演示版本</b><span>LangGraph 最小图、向量检索、带引用生成、SSE 流式、Chainlit 前端、部署上线；<strong>实测单次成本并回填 §1.3</strong></span></div>
+      <div class="ms-out"><span class="pill p-core">可演示</span></div>
+    </div>
+    <div class="ms-row">
+      <div class="ms-id">M3</div>
+      <div class="ms-body"><b>评估体系与基线</b><span>从 FinGLM 筛选复核 <strong>320 条评估集</strong>（先完成 160 条跑通全流程）、主指标判定规则、RAGAS 接入、bootstrap 置信区间、结果入库、CI 冒烟回归</span></div>
+      <div class="ms-out"><span class="pill p-core">基线数据</span></div>
+    </div>
+    <div class="ms-row">
+      <div class="ms-id">M4</div>
+      <div class="ms-body"><b>检索优化消融（三阶段）</b><span>顺序消融 exp02–exp09（含表格元数据、LlamaIndex 对照组）→ <strong>2×2 交叉验因子独立性</strong> → <strong>逆向消融算边际贡献</strong>；指标抽取质量抽检</span></div>
+      <div class="ms-out">指标表<br>9+ 行<br>+ 两张附表</div>
+    </div>
+    <div class="ms-row">
+      <div class="ms-id">M5</div>
+      <div class="ms-body"><b>Agent 能力</b><span>四个工具、ReAct 循环、护栏、Checkpointer 断点续跑、会话与长期记忆、HITL 人工确认</span></div>
+      <div class="ms-out">多步分析<br>可恢复</div>
+    </div>
+    <div class="ms-row">
+      <div class="ms-id">M6</div>
+      <div class="ms-body"><b>成本优化与交付包装</b><span>两级缓存、模型路由、增量更新、README 与架构图、ADR 归档、演示视频、Dify 对照基线</span></div>
+      <div class="ms-out"><span class="pill p-core">可投递</span></div>
+    </div>
+    <div class="ms-row">
+      <div class="ms-id">v1.1+</div>
+      <div class="ms-body"><b>增强项（不进 0→1 范围）</b><span>多智能体 Supervisor · MCP Server 暴露工具 · LoRA 微调路由小模型 + vLLM 部署 · 多租户权限</span></div>
+      <div class="ms-out"><span class="pill p-later">backlog</span></div>
+    </div>
+  </div>
+
+  <h3>16.1 每个里程碑的固定动作</h3>
+  <ol>
+    <li>跑一次评估，向实验记录表追加一行（M3 之后强制）。</li>
+    <li>记录 2–3 个 bad case：现象 → trace 定位 → 根因 → 方案 → 效果。</li>
+    <li>有技术取舍就补一条 ADR，半页即可。</li>
+  </ol>
+  <div class="note">
+    <span class="tag">为什么强调过程记录</span>
+    <p>项目最终的价值载体不是代码，是「为什么这么做」的完整链条。
+    这三件事持续做，收尾时素材自然齐备；补写的记录既不准确，也经不起追问。</p>
+  </div>
+</section>
+
+<!-- CHAPTER -->
+<section id="s17">
+  <div class="sec-head"><div class="sec-num">17</div><h2 class="sec-title">架构决策记录</h2></div>
+  <div class="tw"><table>
+    <thead><tr><th style="width:5.5rem">编号</th><th>决策</th><th>理由与代价</th></tr></thead>
+    <tbody>
+      <tr><td><code>ADR-001</code></td><td>单体双角色，不拆微服务</td><td>在线与离线负载特征不同需隔离；但服务边界未稳定、单人开发，拆分复杂度大于收益。代价：两种角色共享依赖，镜像偏大。</td></tr>
+      <tr><td><code>ADR-002</code></td><td>Milvus 而非 pgvector</td><td>原生混合检索与标量过滤下推；行业通用度高。代价：多一个外部依赖，本地开发需起容器。</td></tr>
+      <tr><td><code>ADR-003</code></td><td>LangChain + LangGraph 为主线</td><td>生态与岗位覆盖面最广，Agent 编排能力完整。LlamaIndex 作为对照组保留，产出选型对比数据。</td></tr>
+      <tr><td><code>ADR-004</code></td><td>Provider 抽象用配置表，不用类继承</td><td>各厂商均兼容 OpenAI 接口，行为无差异，抽象只需承载 base_url / 模型名 / 价格。代价：若未来接入非兼容厂商需重构此层。</td></tr>
+      <tr><td><code>ADR-005</code></td><td>父子块（small-to-big）</td><td>检索精度与上下文完整性不可兼得，分离两种粒度同时满足。代价：存储翻倍，入库链路更复杂。</td></tr>
+      <tr><td><code>ADR-006</code></td><td>BM25 交给 Milvus 内置 Function</td><td>避免两套索引的一致性问题，稀疏向量随写入自动生成。代价：绑定 Milvus 特性。</td></tr>
+      <tr><td><code>ADR-007</code></td><td>评估集先于优化建立</td><td>无基线则一切优化不可量化，项目价值减半。代价：M3 有约一周的纯标注期，无可见功能产出。</td></tr>
+      <tr><td><code>ADR-008</code></td><td>语义缓存独立 Collection</td><td>与文档向量生命周期不同，混存会污染检索。代价：多维护一个集合。</td></tr>
+      <tr><td><code>ADR-009</code></td><td>检索失败时拒答而非自由生成</td><td>可信度优先于可用性，编造答案的危害大于明确失败。代价：可回答率下降。</td></tr>
+      <tr><td><code>ADR-010</code></td><td>实验开关配置化而非代码分支</td><td>消融实验是核心方法论，切换实验不应改代码。代价：配置项增多，需要文档说明。</td></tr>
+      <tr><td><code>ADR-011</code></td><td>一切中间件用托管服务，不自建</td><td>自建 Milvus / Redis / Langfuse 需持续运维，注意力应留给检索与 Agent。代价：月度固定支出，且受平台可用性约束。</td></tr>
+      <tr><td><code>ADR-012</code></td><td>托管平台选 Zeabur 而非国内大厂云</td><td>部署平台不具备简历信号价值，选型只看配置负担；Zeabur 国内直连、数据库一键接入且连接串自动注入。代价：平台小众，极端情况需迁移——但应用已容器化，迁移成本可控。</td></tr>
+      <tr><td><code>ADR-013</code></td><td>语义缓存必须叠加实体硬约束（公司 + 年份 + <strong>科目</strong>）</td><td>纯相似度匹配会返回精确但错误的数字且无法察觉。<strong>M6 实测各类单一差异的余弦相似度（text-embedding-v4）：仅差公司 0.5824，仅差年份 0.86–0.87，仅差科目 0.9224</strong>——最危险的是科目而非年份，它距 0.97 阈值只剩 0.05 余量。本条最初只约束公司与年份，科目维度是实测之后补上的；设计阶段写的「仅差年份相似度常在 0.97 以上」并无实测依据，已更正。代价：命中率下降，实现复杂度增加。<strong>可信度优先于命中率。</strong></td></tr>
+      <tr><td><code>ADR-014</code></td><td>主指标用端到端答案正确率，RAGAS 降为辅助</td><td>Faithfulness 等均为代理指标——模型可以忠实地复述错误的检索结果。财报数值有唯一答案，可做确定性判定，无评判噪声且零成本。代价：需为每类题目制定判定规则。</td></tr>
+      <tr><td><code>ADR-015</code></td><td>评估集 320 条，指标以 bootstrap 95% CI 报告</td><td>120 条时子集仅 20–60 条，单题翻转即造成数个百分点波动，行间差异被噪声淹没，实验记录表在方法上不成立。代价：复核工作量增加，评估耗时与成本上升。</td></tr>
+      <tr><td><code>ADR-016</code></td><td>表格的量纲与科目口径结构化为元数据</td><td>中文年报量纲混用、科目命名不统一，是数值题出错的首要原因，留在文本里模型无法可靠识别。代价：解析链路复杂度显著上升。<strong>这是本项目差异化的核心投入。</strong></td></tr>
+      <tr><td><code>ADR-017</code></td><td>消融分三阶段：顺序 + 交叉 + 逆向</td><td>纯顺序叠加存在路径依赖，无法支撑「A 优于 B」的普遍结论。交叉验因子独立性，逆向算边际贡献。代价：实验次数增加约一倍。</td></tr>
+      <tr><td><code>ADR-018</code></td><td>指标抽取准确率不达 95% 则不开放 SQL 路径</td><td>错误的结构化数据会产出带有数据库权威外观的错误数字，比检索幻觉更难察觉。代价：可能损失一条能力线。</td></tr>
+      <tr><td><code>ADR-019</code></td><td>报表口径（合并/母公司）作为跨页继承的标签写入块正文</td><td>三大报表每张横跨两三页，标题只印在起始页，续页解析出的块与另一口径的块逐字相同——实测茅台 p64（合并现金流量表）与 p66（母公司现金流量表）的块完全无法区分，而两者经营活动现金流净额相差近一倍（615 亿 vs 326 亿）。与量纲同属一类问题，解法一致：标题识别 + 跨页继承，章节变更或超过 4 页即失效。代价：解析链路再增一层状态。</td></tr>
+      <tr><td><code>ADR-020</code></td><td>检索查询按「区分度」构成：过滤字段不进文本，区分字段必须进</td><td>公司名已由 company_code 标量过滤处理，过滤后候选集内每页都含该词，区分度为零却稀释 BM25 权重——实测带公司名时 p6 摘要表进不了前 20，去掉后排第 1。反之年份明写在表格列头（| 2025年 | 2024年 | 2023年 |），必须进检索文本；仅作标量过滤无效，因为 report_year 是文档年度，一份年报同时匹配三个查询年份。代价：查询构造需要知道哪些字段已被过滤。</td></tr>
+      <tr><td><code>ADR-021</code></td><td>评估集的自动生成底稿必须用独立代码路径对账</td><td>底稿由解析器抽取，而被评估系统用的是同一个解析器：解析器读错列时，标准答案与系统回答会一起错，评估全绿而结论是假的。每条抽取值回到原始页面文本（get_text，不经 find_tables）核对一次，可独立证伪「这个数不在这一页上」。代价：无法完全自动化，年份归属仍需人工看列头。</td></tr>
+      <tr><td><code>ADR-022</code></td><td>三年并列表在解析阶段按年份展开成明细行</td><td>「主要会计数据」表把三年并排列出，要答对往年数据模型必须先数清第几列对应哪一年，实测 flash 与 plus 都会数错（问 2024 年给出 2025 年的数），往提示词里加两轮规则都压不住。改为解析时额外输出「【按年份】营业收入：2025年=…；2024年=…；2023年=…」，模型只需字符串匹配。这是继量纲（ADR-016）、报表口径（ADR-019）之后第三次应用同一判断：<strong>程序能确定做出来的结构，不要留给模型推断——提示词规则是概率性的，解析结构是确定性的</strong>。代价：只在能确定对齐时输出（列头至少两个年份、排除增减率列、年份不得重复），对不齐则整段放弃，覆盖率换正确率。</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<!-- CHAPTER -->
+<section id="s18">
+  <div class="sec-head"><div class="sec-num">18</div><h2 class="sec-title">风险登记</h2></div>
+  <div class="tw"><table>
+    <thead><tr><th>风险</th><th>影响</th><th>应对</th></tr></thead>
+    <tbody>
+      <tr><td>评估集复核工作量仍然不小</td><td>核心证据链缺失</td><td>已从「零标注」降为「筛选 + 复核」（见 §11.1）。M3 先完成 160 条跑通全流程，其余在 M4 补齐；宁少而准</td></tr>
+      <tr><td>年报 PDF 解析质量不稳定</td><td>数值题准确率低</td><td>先用 10 家公司验证解析效果再扩量；跨页表格与合并单元格单独测试；解析失败的文档隔离不阻塞</td></tr>
+      <tr><td><strong>缓存误命中</strong></td><td><strong>返回精确但错误的数字，且无告警</strong></td><td>实体三元组硬约束 + 阈值提至 0.97 + 按周抽检误命中率（见 §6.2）</td></tr>
+      <tr><td><strong>指标抽取错误进入 SQL 路径</strong></td><td>错误答案带有数据库权威外观</td><td>来源回链 + AKShare 交叉校验 + 上线前人工核对 50 条；准确率不达 95% 则关闭该路径</td></tr>
+      <tr><td><strong>评估自身成本超过主流程</strong></td><td>预算被评估吃掉</td><td>日常用 80 条分层子集，里程碑节点才跑全量；主指标为确定性判定，几乎零成本</td></tr>
+      <tr><td><strong>项目与开源同类项目同质化</strong></td><td>作品失去区分度</td><td>差异化锚定在中文年报表格数值与口径对齐（见 §1.1），而非「做了 RAG + Agent」</td></tr>
+      <tr><td>Agent 范围蔓延，工具越加越多</td><td>无法收尾</td><td>锁死四个工具、三类任务；新想法一律进 backlog</td></tr>
+      <tr><td>优化后指标不升反降</td><td>挫败感，怀疑方向</td><td>这是正常结果，本身即是素材：「试了 X 无效，trace 显示原因是 Y」同样是完整的技术叙事</td></tr>
+      <tr><td>AI 辅助开发导致「能跑但讲不清」</td><td>面试当场暴露，比没做更糟</td><td>每个模块完成后合上代码复述设计意图；讲不顺即回补（见 §19）</td></tr>
+      <tr><td>API 成本失控</td><td>预算超支</td><td>M2 测出真实单次成本并回填目标值；设 Agent 单会话预算上限与月度告警</td></tr>
+      <tr><td>公开 demo 被恶意刷量</td><td>额度被耗尽</td><td>用户与 IP 双维度限流；demo 环境用独立低配额 Key</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<!-- ══════════ 19 ══════════ -->
+<section id="s19">
+  <div class="sec-head"><div class="sec-num">19</div><h2 class="sec-title">面试准备</h2></div>
+  <p>
+    这个项目的产出物不是代码，是一段能经得起追问的技术叙事。本章是那段叙事的底稿，
+    需要在开发过程中<strong>持续填充</strong>，而不是收尾时临时编写。
+  </p>
+
+  <h3>19.1 三个长度的项目自述</h3>
+
+  <h4>30 秒版（自我介绍时用）</h4>
+  <div class="note">
+    <p>「我做了一个基于 A 股上市公司年报的智能问答系统。用户用自然语言提问，系统从年报原文里找到依据、
+    给出带页码引用的答案，答不了的会自己调工具去查数据、做计算、出图表。
+    <strong>难点在中文年报的表格——量纲混用、科目名不统一、表格还跨页</strong>，
+    我用一套结构化元数据的方案把数值题准确率从 X% 提到了 Y%。」</p>
+  </div>
+
+  <h4>2 分钟版（追问"详细说说"时用）</h4>
+  <p>在 30 秒版基础上补三段，每段一句话打底、一个数字收尾：</p>
+  <ol>
+    <li><strong>系统是怎么搭的</strong>——离线把年报解析、分块、向量化入库；在线走路由，简单问题走检索，复杂问题走 Agent 多步编排。</li>
+    <li><strong>怎么知道它好不好</strong>——先建了 320 条评估集，跑出基线，之后每做一次优化就跑一次，记录一行数据。指标带置信区间，不是拍脑袋的数字。</li>
+    <li><strong>做了哪些取舍</strong>——举一个主动砍掉的东西（如逆向消融发现某组件边际收益不足 1 个点却增加 20% 成本）。</li>
+  </ol>
+
+  <h4>5 分钟版（技术深挖时用）</h4>
+  <p>围绕<strong>一个 bad case 的完整闭环</strong>展开，这比铺开讲架构更有效。模板见 §19.3。</p>
+
+  <h3>19.2 高频追问与回答要点</h3>
+  <div class="tw"><table>
+    <thead><tr><th style="width:13rem">问题</th><th>回答要点</th><th style="width:5rem">依据</th></tr></thead>
+    <tbody>
+      <tr><td>你的检索不准，怎么解决的？</td>
+        <td>先定位是召回问题还是生成问题（看 Recall 与 Faithfulness 哪个低）→ 再按混合检索、重排、改写逐项验证 → 每步有数据。<strong>不要直接答「加了 rerank」</strong>，要展示定位过程</td><td>§12.2</td></tr>
+      <tr><td>为什么这样分块？</td>
+        <td>试了固定长度、递归、按标题三种并对比；表格场景下固定长度会把表头和数据行切开，导致单位丢失</td><td>§6.1 §12.3</td></tr>
+      <tr><td>怎么评估效果？</td>
+        <td><strong>这是最能拉开差距的一题。</strong>主指标是端到端答案正确率（确定性判定），RAGAS 只作辅助归因；评估集 320 条分四类；指标报 bootstrap 95% 置信区间</td><td>§12</td></tr>
+      <tr><td>幻觉怎么防？</td>
+        <td>四层：强制引用、相关度阈值拒答、引用编号核验、评估集里专门的拒答子集与误答率指标</td><td>§6.2 §1.3</td></tr>
+      <tr><td>Agent 怎么保证不跑飞？</td>
+        <td>步数上限、工具白名单、参数校验、错误次数上限、单会话成本预算；触顶时强制收敛作答而非无限循环</td><td>§6.3</td></tr>
+      <tr><td>成本怎么控制？</td>
+        <td>两级缓存 + 模型路由 + 空检索短路 + 上下文预算裁剪；有具体下降幅度。<strong>要主动提缓存误命中的风险和防护</strong></td><td>§10.2</td></tr>
+      <tr><td>线上出问题怎么排查？</td>
+        <td>Langfuse 全链路 trace，记录了 <code>retrieved_uids</code>，可以倒查「这个错误答案当时检索回了什么」——没有这个字段，bad case 无法归因</td><td>§10.3</td></tr>
+      <tr><td>为什么用 Milvus 不用 pgvector？</td>
+        <td>原生混合检索与标量过滤下推；本地开发保留 pgvector 作降级方案。<strong>要说出代价</strong>：多一个外部依赖</td><td>ADR-002</td></tr>
+      <tr><td>为什么 LangChain 不是 LlamaIndex？</td>
+        <td>两个都实测过（exp09 对照组）：LlamaIndex 分块开箱效果更好，LangChain 与 LangGraph 集成更顺。<strong>有数据，不是「大家都用」</strong></td><td>§13.2</td></tr>
+      <tr><td>用了框架，你自己做了什么？</td>
+        <td>选型依据、参数调优、问题归因。举例：在 trace 里发现框架默认的查询改写在中文短问句上引入噪声，因此关闭换成自定义 prompt</td><td>§13.2</td></tr>
+      <tr><td>这个项目最难的是什么？</td>
+        <td>中文年报表格的量纲与科目口径对齐。举一个具体 bad case，讲清现象、定位、方案、数据</td><td>§6.1</td></tr>
+      <tr><td>重做的话你会改什么？</td>
+        <td>诚实回答。例如：评估集应该一开始就做到 300 条以上，120 条的统计功效不足；或 LoRA 那块 ROI 为负，生产系统不会这么选</td><td>§13.2 ⑥</td></tr>
+    </tbody>
+  </table></div>
+
+  <h3>19.4 可以直接讲的真实 bad case</h3>
+  <p>下面六条都带现象、定位过程与实测数字，取自 <code>docs/lessons.md</code>。
+  <strong>讲项目时优先用这些，而不是复述架构。</strong>面试官要听的是「你怎么发现并证明的」。</p>
+  <div class="tw"><table>
+    <thead><tr><th style="width:11rem">一句话</th><th>怎么讲</th><th style="width:6rem">出处</th></tr></thead>
+    <tbody>
+      <tr><td><strong>换评估集掉了 22.6 个点</strong></td>
+        <td>v1（61 题 / 2 家公司）上连续两次满分，同一套代码跑 v2（182 题 / 12 家）只有 74.7%。
+        那 22.6 点就是对着 61 道题调了六轮提示词的过拟合代价。<strong>当时就拒绝把满分写成「准确率 100%」，
+        写进了待办清单</strong>——这一点比分数本身更值得讲</td><td>benchmarks</td></tr>
+      <tr><td><strong>模型抄错了股票代码</strong></td>
+        <td>语料扩到 12 家后，茅台的题几乎全军覆没，清一色「不应拒答却拒答了」。
+        打印中间状态才看到 <code>company_codes=['600900']</code>——那是长江电力。
+        <strong>日志只写「检索不到」，指标只看到拒答率上升，所有线索都指向检索，而错误发生在检索之前。</strong>
+        修法：模型只输出公司名，代码由程序查表。+22.6 点，区间不重叠</td><td>7.11</td></tr>
+      <tr><td><strong>两张报表解析出的块逐字相同</strong></td>
+        <td>经营活动现金流同比算出 -11.43%，正确是 -33.46%。打印两个候选块的原文，
+        发现合并现金流量表与母公司现金流量表的块<strong>一个字都不差</strong>——报表标题只印在起始页，
+        续页没有。与「元/千元」是同一类问题，解法也一样：跨页继承。
+        两者数值差近一倍（615 亿 vs 326 亿）</td><td>7.3 / ADR-019</td></tr>
+      <tr><td><strong>最该检索到的表从未进过前 20</strong></td>
+        <td>四家公司 × 两个年份 × 两种查询拉成一张表：「主要会计数据」汇总表在朴素查询下
+        <strong>一次都没进过前 20</strong>，加上表名提示后稳定在第 2–6 名。
+        原因是 BM25 按词频打分，而这张表里「营业收入」只出现一次。
+        <strong>信息密度最高的内容在词频检索里天然是弱者。</strong>
+        指标还有 97%，只是因为模型从别处也能答对当年的数</td><td>7.16</td></tr>
+      <tr><td><strong>总体指标没动，其实修好了一半</strong></td>
+        <td>某次改动前后正确率都是 97.3%，差点判定「这个改动没用」。
+        对比失败清单发现换了人：两道修好、两道新坏。
+        根因是检索提示写死了上交所的措辞，而深交所的叫法不同——<strong>它只覆盖了一半公司</strong>。
+        看汇总数字会得出错误结论，看失败清单才知道真相</td><td>7.13</td></tr>
+      <tr><td><strong>三个被推荐的 RAG 手段都没用</strong></td>
+        <td>重排、语义分块、强模型，在本场景全部无显著收益（区间重叠）。
+        真正起作用的是一个很少被讨论的参数：<strong>送进上下文的块数</strong>。
+        分阶段测量显示检索 top20 的页码召回是 95.9%，截断到 top5 只剩 44.9%——
+        <strong>信息不是没检索到，是检索到之后被扔掉了</strong></td><td>benchmarks</td></tr>
+    </tbody>
+  </table></div>
+
+  <h3>19.3 技术叙事模板</h3>
+  <p>每个技术点都应该能用这个结构讲满两分钟。<strong>开发过程中每遇到一个 bad case 就按此模板记一条</strong>，到收尾时素材自然齐备。</p>
+<pre>
+<b>① 现象</b>   涉及表格的数值题准确率明显偏低，只有 45%
+
+<b>② 定位</b>   抽 20 个 bad case 看 trace，发现检索回的片段里有数字、没有单位——
+          表头写着"单位：万元"，但分块时表头与数据行被切开了
+
+<b>③ 假设</b>   不是召回问题（Recall 正常），是分块策略导致量纲信息丢失
+
+<b>④ 方案</b>   表格整块不切分 + 把 unit / statement_type / period 抽为结构化元数据
+          随块返回，生成阶段强制模型声明单位与科目全称
+
+<b>⑤ 数据</b>   该类问题准确率 45% → 82%，总体数值准确率 +11 个点
+
+<b>⑥ 取舍</b>   块变大，输入 token 涨了约 15%，单次成本上升；
+          用语义缓存把这部分抵消回来，净成本基本持平
+</pre>
+  <div class="note note-ok">
+    <span class="tag">为什么这个结构有效</span>
+    <p>它同时展示了五种能力：<strong>发现问题</strong>（有监控）、<strong>定位问题</strong>（会看 trace）、
+    <strong>形成假设</strong>（不瞎试）、<strong>量化效果</strong>（有数据）、<strong>权衡代价</strong>（懂工程）。
+    单纯罗列技术名词只能展示第零种。</p>
+  </div>
+
+  <h3>19.4 简历写法</h3>
+<pre>
+<b>项目描述</b>（两行以内，必须含数字与差异化）
+  FinCopilot — 基于 A 股年报的 RAG + Agent 问答服务。主攻中文年报表格数值问答
+  （量纲归一 / 科目口径对齐），数值题准确率 X%，建立 320 条评估集与消融实验体系。
+
+<b>技能栏</b>
+  大模型应用：LangChain · LangGraph · RAG 全链路（混合检索/Rerank/父子块/查询改写）
+              Function Calling · Human-in-the-loop · MCP
+  模型与推理：多 Provider 适配（通义/DeepSeek/豆包）· LoRA 微调 · vLLM · BGE Embedding & Rerank
+  数据与评估：Milvus · PostgreSQL · Redis · RAGAS · 评估集设计与消融实验 · Langfuse 可观测
+  工程：Python · FastAPI · 异步与流式 · Docker · CI 评估回归
+
+<u>附在线 demo 链接与 GitHub 链接——面试官点开就能用，转化率远高于文字描述。</u>
+</pre>
+
+  <h3>19.5 不要说的话</h3>
+  <div class="tw"><table>
+    <thead><tr><th style="width:16rem">不要说</th><th>原因与替代说法</th></tr></thead>
+    <tbody>
+      <tr><td>「我用 RAG 做了个知识库」</td><td>信息量为零。替代：说清难点是什么、用什么方法、提升了多少</td></tr>
+      <tr><td>「部署在生产环境，有真实用户」</td><td>夸大事实，一问细节就露馅。如实说是个人项目、有公开 demo</td></tr>
+      <tr><td>「我自己实现了混合检索算法」</td><td>框架已提供的东西不要说成自研。替代：说你如何选型、如何调参、如何验证</td></tr>
+      <tr><td>「准确率有 90% 多」</td><td>没有来源、没有样本量、没有区间的数字不可信。替代：「320 条评估集上，数值题 82.4%，95% 置信区间 [78.1, 86.2]」</td></tr>
+      <tr><td>「这个我了解过」</td><td>模糊表述会引来更深的追问。不会就直说不会，然后说你会怎么查</td></tr>
+      <tr><td>把 LoRA 说成项目核心技术</td><td>它在本场景 ROI 为负。主动说明这个判断反而加分，见 §13.2 ⑥</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<!-- ══════════ 20 ══════════ -->
+<section id="s20">
+  <div class="sec-head"><div class="sec-num">20</div><h2 class="sec-title">术语表</h2></div>
+  <p>用大白话解释本文出现的专有名词。不需要按顺序读，遇到不懂的词回来查即可。</p>
+
+  <h3>20.1 检索增强（RAG）相关</h3>
+  <div class="tw"><table>
+    <thead><tr><th style="width:11rem">术语</th><th>大白话解释</th></tr></thead>
+    <tbody>
+      <tr><td><strong>RAG</strong><br>检索增强生成</td><td>让大模型回答问题前，先去资料库里"翻书"找到相关段落，再基于这些段落回答。好处是答案有依据、可溯源，且换资料不用重新训练模型</td></tr>
+      <tr><td><strong>Embedding</strong><br>向量 / 嵌入</td><td>把一段文字转换成一串数字（本项目是 1024 个）。意思相近的文字，数字也相近。这样"找相似段落"就变成了"找相近数字"</td></tr>
+      <tr><td><strong>向量数据库</strong></td><td>专门存这些数字串并快速找出最相近几条的数据库。本项目用 Milvus</td></tr>
+      <tr><td><strong>Chunking</strong><br>分块</td><td>把长文档切成小段再存。切得太大检索不精准，太小又会丢失上下文——切法本身就是一门手艺</td></tr>
+      <tr><td><strong>父子块</strong><br>small-to-big</td><td>同一段内容存两份：小块用来精准检索，大块用来喂给模型。兼顾"找得准"和"看得全"</td></tr>
+      <tr><td><strong>召回 / Recall@K</strong></td><td>该找到的资料，有没有出现在返回的前 K 条里。Recall@5 = 85% 意思是 100 次里有 85 次正确资料出现在前 5 条中</td></tr>
+      <tr><td><strong>BM25</strong></td><td>传统的关键词匹配算法。和向量检索互补：向量懂语义但可能漏掉精确的专有名词，BM25 正好相反</td></tr>
+      <tr><td><strong>混合检索</strong></td><td>同时用向量和 BM25 检索，再把两份结果融合排序（本项目用 RRF 算法融合）</td></tr>
+      <tr><td><strong>Rerank</strong><br>重排</td><td>检索出 40 条候选后，用一个更精细（也更慢）的模型重新打分，挑出最好的 5 条。相当于"粗筛 + 精选"两道工序</td></tr>
+      <tr><td><strong>查询改写</strong></td><td>把用户的原话改成更适合检索的形式。比如多轮对话里「它的毛利率呢」要先还原成「贵州茅台的毛利率」，这一步叫指代消解</td></tr>
+      <tr><td><strong>HyDE</strong></td><td>一种改写技巧：先让模型"假装"写一个答案，再用这个假答案去检索。因为答案和资料的措辞更接近，有时比用问题检索更准</td></tr>
+      <tr><td><strong>幻觉</strong></td><td>模型一本正经地编造事实。RAG 能大幅缓解但无法根除，所以还需要引用核验和拒答机制</td></tr>
+    </tbody>
+  </table></div>
+
+  <h3>20.2 智能体（Agent）相关</h3>
+  <div class="tw"><table>
+    <thead><tr><th style="width:11rem">术语</th><th>大白话解释</th></tr></thead>
+    <tbody>
+      <tr><td><strong>Agent</strong><br>智能体</td><td>能自己决定"下一步干什么"的模型程序。比如为了回答对比问题，它自己决定先查 A 公司、再查 B 公司、然后算比率、最后画图</td></tr>
+      <tr><td><strong>Function Calling</strong><br>工具调用</td><td>模型不直接回答，而是输出一个"我要调用某个函数、参数是这些"的结构化请求，程序执行后把结果给它。这是 Agent 能干活的基础</td></tr>
+      <tr><td><strong>ReAct</strong></td><td>一种 Agent 工作模式：思考 → 行动 → 观察结果 → 再思考，循环直到得出答案</td></tr>
+      <tr><td><strong>LangGraph</strong></td><td>把 Agent 的执行流程画成一张"状态图"的框架：每个节点是一步操作，边是流转条件。好处是流程可控、可中断、可恢复</td></tr>
+      <tr><td><strong>Checkpoint</strong></td><td>把执行到一半的状态存进数据库。断线或崩溃后能从中断处继续，不用从头再来</td></tr>
+      <tr><td><strong>HITL</strong><br>人工确认</td><td>Human-in-the-loop。关键操作前暂停，等人点头再继续。本项目用在"投资建议"类输出上，因为合规上 AI 不能直接给投资建议</td></tr>
+      <tr><td><strong>护栏</strong><br>Guardrail</td><td>防止 Agent 失控的各种限制：最多走几步、只能用哪些工具、花多少钱就停</td></tr>
+      <tr><td><strong>Text2SQL</strong></td><td>把自然语言问题翻译成数据库查询语句。方便但危险——必须限制成只读、限制可查的表</td></tr>
+      <tr><td><strong>MCP</strong></td><td>一种让工具能被不同 AI 应用通用调用的协议标准，相当于工具界的 USB 接口</td></tr>
+    </tbody>
+  </table></div>
+
+  <h3>20.3 评估相关</h3>
+  <div class="tw"><table>
+    <thead><tr><th style="width:11rem">术语</th><th>大白话解释</th></tr></thead>
+    <tbody>
+      <tr><td><strong>评估集</strong></td><td>一批事先准备好标准答案的题目。每次改动后都用同一批题重跑，才能知道是变好还是变坏</td></tr>
+      <tr><td><strong>基线</strong><br>Baseline</td><td>优化之前的初始成绩。没有基线，后面所有"提升了多少"都无从谈起——所以评估集必须先于优化建立</td></tr>
+      <tr><td><strong>消融实验</strong><br>Ablation</td><td>一次只改一个地方，看指标变化多少，从而判断每个改动各自贡献了多少。类似控制变量法</td></tr>
+      <tr><td><strong>代理指标</strong></td><td>不能直接衡量目标、只能间接反映的指标。比如"忠实度"高不代表答案对，只代表模型老实复述了检索结果</td></tr>
+      <tr><td><strong>LLM-as-judge</strong></td><td>用大模型给另一个大模型的输出打分。方便但有噪声且花钱，所以本项目只把它当辅助手段</td></tr>
+      <tr><td><strong>RAGAS</strong></td><td>一个专门评估 RAG 系统的开源工具，提供忠实度、答案相关性等指标</td></tr>
+      <tr><td><strong>Faithfulness</strong><br>忠实度</td><td>答案里的每句话，是不是都能在检索到的资料里找到依据</td></tr>
+      <tr><td><strong>置信区间</strong><br>Bootstrap CI</td><td>题目数量有限时，测出的准确率本身带误差。置信区间就是给出"真实值大概率落在哪个范围内"。<strong>两组数据的区间重叠，就不能说谁更好</strong></td></tr>
+      <tr><td><strong>统计功效</strong></td><td>样本量够不够支撑结论。20 道题时一道题的对错就是 5 个百分点，这种波动会淹没真实差异</td></tr>
+    </tbody>
+  </table></div>
+
+  <h3>20.4 工程相关</h3>
+  <div class="tw"><table>
+    <thead><tr><th style="width:11rem">术语</th><th>大白话解释</th></tr></thead>
+    <tbody>
+      <tr><td><strong>Token</strong></td><td>模型处理文字的最小单位，中文大致一个字一个 token。模型按 token 数收费，所以 token 就是钱</td></tr>
+      <tr><td><strong>Prompt</strong></td><td>发给模型的指令文本。写法直接决定输出质量，所以"prompt 工程"是一项真实技能</td></tr>
+      <tr><td><strong>Trace</strong><br>链路追踪</td><td>把一次请求经过的每一步、每步的耗时和花费都记录下来。出问题时能倒查，是排障的唯一依据</td></tr>
+      <tr><td><strong>SSE</strong><br>流式输出</td><td>答案边生成边推送给用户，不用等全部写完。体验上等同于打字机效果</td></tr>
+      <tr><td><strong>语义缓存</strong></td><td>意思相近的问题直接返回上次的答案，省钱省时间。但相近的判断必须严格，否则会返回错误答案（见 §6.2）</td></tr>
+      <tr><td><strong>降级</strong></td><td>某个环节坏了时，用次优方案继续服务而不是整个挂掉。比如重排服务挂了就跳过重排</td></tr>
+      <tr><td><strong>幂等</strong></td><td>同样的操作重复执行，结果不变。比如同一份文档重复上传不会重复入库</td></tr>
+      <tr><td><strong>LoRA 微调</strong></td><td>不改动原模型，只训练一小部分附加参数，让模型适应特定任务。比全量训练便宜得多</td></tr>
+      <tr><td><strong>vLLM</strong></td><td>一个高效的模型推理服务框架，用于自己部署模型对外提供 API</td></tr>
+      <tr><td><strong>ADR</strong><br>架构决策记录</td><td>把"为什么做这个选择、代价是什么"写下来存档。见 §17</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+</main>
+</div>
+
+<footer>
+  <div class="foot-in">
+    <div>FinCopilot · 架构设计说明书 v1.0</div>
+    <div>状态：待评审 · 下一步 M0 骨架</div>
+  </div>
+</footer>
+
+</body>
+</html>
