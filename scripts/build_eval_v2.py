@@ -222,6 +222,23 @@ def refuse_items(names: set[str], variant: str = "default") -> list[dict]:
     return out
 
 
+def conflicting(items: list[dict]) -> list[tuple[str, list[str]]]:
+    """找出同一问题带着不同标准答案的题。
+
+    v4 留出集栽在这里：广发证券年报第 19 / 20 页有两张同名的「主要会计数据」，
+    一张合并一张母公司，抽取器把两套数值归进了同一个科目，于是
+    「广发证券2023年营业总收入是多少？」在文件里出现两次，
+    答案分别是 229.94 亿和 145.95 亿。**系统答什么都必然错一道。**
+
+    这种缺陷与得分无关、可机械判定，本该在评估之前就把文件拒掉，
+    而不是跑完 86 题、看见某家公司 1 对 10 错才回头查。
+    """
+    by_q: dict[str, set[str]] = defaultdict(set)
+    for it in items:
+        by_q[it["question"]].add(it["ground_truth"])
+    return [(q, sorted(a)) for q, a in by_q.items() if len(a) > 1]
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--sample", type=int, default=0, help="只抽样打印 N 条供人工核对，不写文件")
@@ -300,6 +317,19 @@ def main() -> int:
             print(f"   答案 {it['ground_truth']}  页码 {it['expected_pages']}")
             print(f"   依据 {it['note'][:150]}")
         return 0
+
+    if bad := conflicting(merged):
+        print()
+        print(f"评估集不自洽，拒绝写出。{len(bad)} 个问题带有互斥的标准答案：")
+        for q, answers in bad[:10]:
+            print(f"  {q}")
+            for a in answers:
+                print(f"      {a}")
+        print()
+        print("多半是同一科目在年报里出现于两张同名表（合并 / 母公司），")
+        print("或列头有调整前 / 调整后双列。先修 scripts/extract_key_metrics.py 的取数，")
+        print("不要用判分规则绕过——无论系统答什么，这些题必然错一道。")
+        return 1
 
     out_path = DATASETS / f"{args.out}.jsonl"
     body = "\n".join(json.dumps(it, ensure_ascii=False) for it in merged)

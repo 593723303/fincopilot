@@ -104,9 +104,7 @@ def header_years(line: str) -> tuple[int, dict[int, int]] | None:
 GROUPED = re.compile(r"^-?\d{1,3}(?:,\d{3})+(?:\.\d+)?$")
 
 
-def align_by_shape(
-    cells: list[str], cols: dict[int, int]
-) -> tuple[dict[int, int], list[str]] | None:
+def align_by_shape(cells: list[str], cols: dict[int, int]) -> tuple[dict[int, int], list[str]] | None:
     """列数对不上时，按数值形态再对齐一次。
 
     紫金矿业的表头把「本期比上年同期增减(%)」并进了首格，于是表头只数出
@@ -153,6 +151,11 @@ def corroborate(doc_pdf: pymupdf.Document, page_start: int, raw: str, page_end: 
     return False
 
 
+# 汇总表的口径小标题，例如「主要会计数据（母公司）」。只匹配 caption，
+# 不匹配正文——正文里提到「母公司」的句子很多，匹配上会误伤整张合并表。
+PARENT_SCOPE = re.compile(r"母公司")
+
+
 def extract(doc: ParsedDocument, doc_pdf: pymupdf.Document) -> list[dict]:
     rows: list[dict] = []
     for blk in doc.blocks:
@@ -160,6 +163,14 @@ def extract(doc: ParsedDocument, doc_pdf: pymupdf.Document) -> list[dict]:
         # 是表上方的一行文字，没被识别成章节标题，只落在 caption 里
         where = f"{blk.heading_path or ''} {blk.caption or ''}"
         if blk.kind != "table" or not SUMMARY_HEADING.search(where):
+            continue
+        # 口径写在表格上方的小标题里，不在 heading 里：广发证券第 19/20 页
+        # 是两张同名的「主要会计数据」，一张（合并报表）一张（母公司），
+        # 共用 heading「九、主要会计数据和财务指标」。只认 heading 会把两套
+        # 数值混进同一个科目，同一道题因此产生两个互斥的标准答案（v4 实测）。
+        # 不限定口径的题按本项目规则默认合并，所以母公司那张整块跳过；
+        # 口径对比题走 extract_scope_pairs，有自己的三大报表来源，不受影响。
+        if PARENT_SCOPE.search(blk.caption or ""):
             continue
         lines = [ln for ln in blk.text.splitlines() if ln.startswith("|")]
         if len(lines) < 3:
