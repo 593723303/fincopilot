@@ -565,6 +565,37 @@ def rebuild_table_by_words(page: pymupdf.Page, bbox) -> list[list[str]]:
     return out
 
 
+def year_header_from_above(page: pymupdf.Page, bbox, cols) -> list[str]:
+    """从表格上方的区域重建一行年份表头。
+
+    招商银行把「2025年 2024年 本年比上年增减(%) 2023年」排在表格框之上，
+    `find_tables` 的 bbox 从「经营业绩」才开始——于是表内第一行一个年份都没有，
+    靠列头定年份的逻辑全部失效，整张表被跳过。
+    中国平安、中国石油也是同样的排法。
+
+    列边界用表格自己的（数值是对齐的），只是把上方那几行的词按同样的列归位。
+    找不到两个以上年份就返回空，不猜。
+    """
+    above = pymupdf.Rect(bbox[0], max(0, bbox[1] - LOOKUP_ABOVE), bbox[2], bbox[1])
+    words = page.get_text("words", clip=above)
+    if not words or not cols:
+        return []
+
+    cells = [""] * (len(cols) + 1)
+    for w in sorted(words, key=lambda w: w[0]):
+        center = (w[0] + w[2]) / 2
+        idx = 0
+        for i, (left, right) in enumerate(cols, start=1):
+            if left - X_TOL <= center <= right + X_TOL:
+                idx = i
+                break
+        cells[idx] = (cells[idx] + " " + w[4]).strip()
+
+    if sum(len(YEAR_LABEL.findall(c)) for c in cells) < 2:
+        return []
+    return cells
+
+
 def render_table(rows: list[list[str]], ctx: TableContext, heading: str) -> str:
     """把表格渲染为带量纲声明的 Markdown。
 
@@ -662,6 +693,14 @@ def parse_pdf(path: str | Path, max_pages: int | None = None) -> ParsedDocument:
                 merged_before = count_merged_cells(rows)
                 if merged_before:
                     rebuilt = rebuild_table_by_words(page, t.bbox)
+                    # 表内没有年份时，去表格上方把表头捞回来。
+                    # 招行/平安/中石油把年份行排在表格框之外，
+                    # 不补的话这几家一条指标都抽不出来。
+                    if rebuilt and not year_label_count(rebuilt):
+                        words = page.get_text("words", clip=pymupdf.Rect(t.bbox))
+                        header = year_header_from_above(page, t.bbox, numeric_columns(words))
+                        if header:
+                            rebuilt = [header, *rebuilt]
                     # 判据直接衡量目的：**数字有没有被分进各自的单元格**。
                     # 先后试过两种更直觉的判据，都不行：
                     #   「重建后必须零粘连」——一行没切开就丢掉整张好表

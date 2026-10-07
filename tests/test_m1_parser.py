@@ -365,3 +365,13 @@ def test_bare_decimal_is_not_a_heading():
     t = HeadingTracker()
     assert t.feed("2.1") is False
     assert t.feed("1.23") is False
+
+
+def test_year_header_from_above_needs_two_years():
+    """从表格上方捞表头：找不到两个以上年份就返回空，不猜。"""
+    from app.rag.pdf_parser import YEAR_LABEL
+
+    # 这个判据本身很简单，锁住的是「不足两个年份不采用」这条纪律
+    assert len(YEAR_LABEL.findall("2025年 2024年 增减(%) 2023年")) == 3
+    assert len(YEAR_LABEL.findall("本集团主要会计数据和财务指标")) == 0
+    assert len(YEAR_LABEL.findall("2025年度报告（A股）")) == 1
