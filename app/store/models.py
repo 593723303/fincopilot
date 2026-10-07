@@ -121,7 +121,12 @@ class Chunk(Base):
 
     __table_args__ = (
         CheckConstraint("level IN (0, 1)", name="ck_chunks_level"),
-        CheckConstraint("chunk_type IN ('text', 'table')", name="ck_chunks_type"),
+        # table_summary 是「近三年主要会计数据」那张汇总表，单独成类
+        # 供检索层按标签强制召回（见 P1-7）。加新取值必须同时写迁移——
+        # 只改这里不迁移，入库会被数据库拒绝而解析侧毫无察觉。
+        CheckConstraint(
+            "chunk_type IN ('text', 'table', 'table_summary')", name="ck_chunks_type"
+        ),
         Index("ix_chunks_doc_strategy", "doc_id", "strategy"),
     )
 
