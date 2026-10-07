@@ -109,7 +109,15 @@ services:
 # 绑定挂载会导致数据库容器启动失败。命名卷由容器引擎在 Linux 侧管理，无此问题。
   # ── 应用 ────────────────────────────────────────────────
   # 同一镜像三种角色，靠启动命令区分（架构 §4.2）
+  #
+  # 三个服务都挂在 full profile 下，默认不启动。
+  # 否则 `compose up -d` 会从「拉起存储依赖」变成「构建整套应用」——
+  # 本地开发时代码在宿主机跑，根本不需要这三个容器，
+  # 而构建它们要好几分钟且没有输出，很像卡死。
+  #   本地开发：podman compose up -d
+  #   完整部署：podman compose --profile full up -d --build
   api:
+    profiles: ["full"]
     build: .
     depends_on: [postgres, redis, milvus]
     environment:
@@ -122,6 +130,7 @@ services:
     restart: unless-stopped
 
   worker:
+    profiles: ["full"]
     build: .
     depends_on: [postgres, redis, milvus]
     environment:
@@ -133,6 +142,7 @@ services:
     restart: unless-stopped
 
   ui:
+    profiles: ["full"]
     build: .
     depends_on: [api]
     environment:
