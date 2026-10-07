@@ -24,8 +24,14 @@ import re
 from langchain_core.tools import tool
 
 from app.config.experiment import Experiment
-from app.graph.nodes.rag import SUMMARY_TABLE_HINT, needs_summary_table
-from app.rag.retrievers import QueryFilters, expand_parents, rerank, retrieve
+from app.graph.nodes.rag import needs_summary_table
+from app.rag.retrievers import (
+    QueryFilters,
+    expand_parents,
+    force_summary_table,
+    rerank,
+    retrieve,
+)
 from app.store.milvus import milvus
 
 logger = logging.getLogger(__name__)
@@ -169,8 +175,7 @@ def build_tools(
         # 比报告年度早两年及以上的数据只存在于「近三年主要会计数据」汇总表，
         # 三大报表只有本期/上期两列（与 rag 分支同一条理由）
         report_years = [y for c, _n, y in corpus if c == code]
-        if needs_summary_table([year] if year else [], report_years):
-            search_text = f"{search_text} {SUMMARY_TABLE_HINT}"
+        want_summary = needs_summary_table([year] if year else [], report_years)
         chunks = await retrieve(
             milvus(),
             search_text,
@@ -181,6 +186,14 @@ def build_tools(
             return f"未检索到 {company} {year}年 关于「{query}」的内容。"
 
         chunks, _ = await rerank(chunks, search_text, exp)
+        # 与 rag 分支同一个理由：往年数据只在汇总表里，
+        # 而它在词频检索中天然吃亏，按标签直接取（lessons 7.16）
+        if want_summary:
+            forced = await force_summary_table(
+                milvus(), QueryFilters(company_codes=[code]), exp
+            )
+            known = {c.chunk_uid for c in chunks}
+            chunks = [c for c in forced if c.chunk_uid not in known] + chunks
         chunks, _ = await expand_parents(chunks, exp)
         if collector is not None:
             collector.extend(c.__dict__ for c in chunks[:MAX_CHUNKS_PER_CALL])

@@ -22,6 +22,7 @@ from app.rag.retrievers import (
     QueryFilters,
     RetrievedChunk,
     expand_parents,
+    force_summary_table,
     max_score,
     rerank,
     retrieve,
@@ -263,6 +264,23 @@ async def retrieve_node(state: GraphState) -> GraphState:
         logger.debug("关键词查询去噪：%s → %s", query, keyword_query)
 
     chunks = await retrieve(milvus(), query, filters, exp, keyword_query=keyword_query)
+
+    # 问往年数据时，把「近三年主要会计数据」表按标签直接取回来，
+    # 不和词频赛跑——那张表每个科目只出现一次，实测在朴素查询下
+    # 一次都没进过前 20（lessons 7.16）。
+    years = raw.get("years") or []
+    from app.graph.nodes.query import available_corpus as _corpus
+
+    report_years = [y for _c, _n, y in await _corpus()]
+    if needs_summary_table(years, report_years):
+        forced = await force_summary_table(milvus(), filters, exp)
+        known = {c.chunk_uid for c in chunks}
+        extra = [c for c in forced if c.chunk_uid not in known]
+        if extra:
+            logger.debug("强制召回汇总表 %d 条", len(extra))
+            # 放在最前：它是往年数据唯一的权威来源，
+            # 排在后面会被 top_n 截断扔掉——那正是原来失败的方式
+            chunks = extra + chunks
     degraded: list[str] = list(state.get("degraded") or [])
 
     if not chunks:

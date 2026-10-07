@@ -135,6 +135,41 @@ def build_expr(filters: QueryFilters, strategy: str) -> str:
     return " and ".join(parts)
 
 
+SUMMARY_CHUNK_TYPE = "table_summary"
+
+
+async def force_summary_table(client, filters: QueryFilters, exp, limit: int = 2):
+    """按块类型直接点名召回「近三年主要会计数据」表。
+
+    取代原先往关键词查询里拼表名的做法。那个做法有两个毛病：
+      1. 表名各家写法不同（上交所「近三年主要会计数据和财务指标」、
+         深交所「主要会计数据和财务指标」），写死一种只覆盖一半公司——
+         实测海康威视因此一直召回不到（`lessons.md` 7.13）
+      2. 本质上还是在和词频赛跑，而这张表每个科目只出现一次，天生吃亏
+
+    按标签取就没有这些问题：解析阶段已经确定哪张表是它了。
+    """
+    expr_parts = [f'chunk_type == "{SUMMARY_CHUNK_TYPE}"', f'strategy == "{exp.chunking.strategy}"']
+    if filters.company_codes:
+        codes = ", ".join(f'"{c}"' for c in filters.company_codes)
+        expr_parts.append(f"company_code in [{codes}]")
+    try:
+        rows = await asyncio.to_thread(
+            client.query,
+            collection_name=collection_names()[0],
+            filter=" and ".join(expr_parts),
+            output_fields=OUTPUT_FIELDS,
+            limit=limit,
+        )
+    except Exception as exc:
+        logger.warning("汇总表强制召回失败：%s", exc)
+        return []
+    # query 返回裸字段、没有 distance；给个固定分值让它能与检索结果合流。
+    # 取 0.02 是刻意的：高于相关度阈值（0.010）因而不会把整轮判成拒答，
+    # 又低于真正命中的 RRF 分值，排序时不挤掉本来更相关的块。
+    return [RetrievedChunk.from_hit({"entity": r, "distance": 0.02}) for r in rows]
+
+
 async def retrieve(
     client: MilvusClient,
     query: str,

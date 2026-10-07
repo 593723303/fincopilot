@@ -596,6 +596,27 @@ def year_header_from_above(page: pymupdf.Page, bbox, cols) -> list[str]:
     return cells
 
 
+# 「近三年主要会计数据」这张表的标题各家写法不同（上交所带「近三年」，
+# 深交所不带），但共同点是：标题里有「主要会计数据」或「主要财务数据」，
+# 且表里并列了两个以上年份。靠这两条识别，比匹配某一种措辞稳。
+SUMMARY_TABLE_TITLE = re.compile(r"主要会计数据|主要财务数据|财务概要|财务指标摘要")
+
+
+def is_summary_table(heading: str, caption: str | None, rows: list[list[str]]) -> bool:
+    """这张表是不是「近三年主要会计数据」那张汇总表。
+
+    它是年报里唯一把多年数据并列、且每列明写年份的表，
+    也是问往年数据时唯一的来源。但它在词频检索里天然吃亏——
+    每个科目只出现一次，而管理层讨论里会出现几十次
+    （`lessons.md` 7.16：实测它在朴素查询下一次都没进过前 20）。
+    打上标记后由检索层强制召回，不再靠关键词碰运气。
+    """
+    where = f"{heading or ''} {caption or ''}"
+    if not SUMMARY_TABLE_TITLE.search(where):
+        return False
+    return year_label_count(rows) >= 2
+
+
 def render_table(rows: list[list[str]], ctx: TableContext, heading: str) -> str:
     """把表格渲染为带量纲声明的 Markdown。
 
@@ -818,6 +839,8 @@ def parse_pdf(path: str | Path, max_pages: int | None = None) -> ParsedDocument:
                 flags.append(f"unit_src:{ctx.unit_source}")
 
             body_rows = rows[skip_rows:] if skip_rows else rows
+            if is_summary_table(heading, ctx.caption, body_rows):
+                flags.append("summary_table")
             blk = ParsedBlock(
                 kind="table",
                 text=render_table(body_rows, ctx, heading),

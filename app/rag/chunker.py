@@ -54,6 +54,19 @@ class ChunkUnit:
     token_count: int = 0
 
 
+def chunk_type_of(blk) -> str:
+    """块类型。汇总表单独成一类，供检索层按标签强制召回。
+
+    「近三年主要会计数据」是年报里唯一把多年数据并列、每列明写年份的表，
+    却在词频检索里天然吃亏——每个科目只出现一次，而管理层讨论里
+    会出现几十次（lessons 7.16：实测它在朴素查询下一次都没进过前 20）。
+    打成独立类型后由检索层直接点名要，不再靠关键词碰运气。
+    """
+    if blk.kind == "table" and "summary_table" in (blk.flags or []):
+        return "table_summary"
+    return blk.kind
+
+
 def make_uid(doc_key: str, strategy: str, level: int, seq: int) -> str:
     """生成稳定可复现的块 ID。
 
@@ -210,7 +223,7 @@ def chunk_document(doc: ParsedDocument, doc_key: str, cfg: ChunkingCfg) -> list[
                     chunk_uid=parent_uid,
                     content=with_heading(text, heading),
                     level=0,
-                    chunk_type=head.kind,
+                    chunk_type=chunk_type_of(head),
                     heading_path=heading,
                     page_start=page_start,
                     page_end=page_end,
@@ -239,7 +252,7 @@ def chunk_document(doc: ParsedDocument, doc_key: str, cfg: ChunkingCfg) -> list[
                     chunk_uid=make_uid(doc_key, cfg.strategy, 1, child_seq),
                     content=body,
                     level=1,
-                    chunk_type=head.kind,
+                    chunk_type=chunk_type_of(head),
                     heading_path=heading,
                     page_start=page_start,
                     page_end=page_end,
