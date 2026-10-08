@@ -469,6 +469,64 @@ def count_merged_cells(rows: list[list[str]], skip_first_col: bool = False) -> i
 
 YEAR_LABEL = re.compile(r"20\d{2}\s*年")
 
+# 「有数值」的格：带千分位、带小数点或带百分号。
+# 刻意不认光秃秃的整数——列头里的「2025 年」也是数字，
+# 用「任意数字」判断会把表头误判成数据行。
+VALUE_CELL = re.compile(r"\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+\.\d+|\d+(?:\.\d+)?\s*%")
+CJK = re.compile(r"[一-鿿]")
+
+
+def merge_wrapped_labels(rows: list[list[str]]) -> list[list[str]]:
+    """把被换行拆开的科目名并回它所属的数据行。
+
+    年报的「项目」列往往很窄，长科目名会折成两三行，而数值只落在第一行：
+
+        | 经营活动产生的现金流 | -27,780,960,722.97 | 9,970,809,011.81 |
+        | 量净额（元）         |                    |                  |
+
+    后果是**整词在块里从不出现**。「经营活动产生的现金流量净额」这串字
+    一次都匹配不上，BM25 自然打不中；而同一份年报里列宽些的那张表
+    没有折断，于是检索稳定地选中了错的那张。
+
+    广发证券 v4 就栽在这里：问 2023 年经营活动现金流，合并表（第 19 页，
+    科目名折断）排不进来，只召回了母公司表（第 20 页，科目名完整），
+    而母公司表没有合并口径的数，模型据此拒答——
+    数据明明在库里（-8,918,975,156.38），却答不出来。
+
+    判定一行是「折断的续行」要同时满足四个条件，少一个都会误伤：
+
+    1. 非空格全是中文——排除 `-`、`—` 这类占位符撑起来的真数据行
+    2. 行内没有任何数值格
+    3. 非空格不超过两个——`调整前 | 调整后 | 调整后 | …` 这类子列头有五格，
+       它属于表头，并进上一行会把列头毁掉
+    4. **上一行必须有数值格**——这条挡住紧跟在表头后面的子列头行：
+       表头里的「2025 年」不算数值（见 `VALUE_CELL`），于是子列头
+       不会被并进表头
+    """
+    out: list[list[str]] = []
+    for row in rows:
+        cells = [normalize_cell(c) for c in row]
+        texts = [c for c in cells if c]
+        prev_has_value = bool(out) and any(VALUE_CELL.search(c) for c in out[-1])
+        if (
+            prev_has_value
+            and texts
+            and len(texts) <= 2
+            and all(CJK.search(c) for c in texts)
+            and not any(VALUE_CELL.search(c) for c in texts)
+        ):
+            tail = "".join(texts)
+            prev = out[-1]
+            for j, cell in enumerate(prev):
+                if cell and not VALUE_CELL.search(cell):
+                    prev[j] = cell + tail
+                    break
+            else:
+                out.append(cells)
+            continue
+        out.append(cells)
+    return out
+
 
 def year_label_count(rows: list[list[str]]) -> int:
     """**单行内**最多有几个年份标签——用来判断列头有没有被打散。
@@ -838,7 +896,7 @@ def parse_pdf(path: str | Path, max_pages: int | None = None) -> ParsedDocument:
             if ctx.unit_source:
                 flags.append(f"unit_src:{ctx.unit_source}")
 
-            body_rows = rows[skip_rows:] if skip_rows else rows
+            body_rows = merge_wrapped_labels(rows[skip_rows:] if skip_rows else rows)
             if is_summary_table(heading, ctx.caption, body_rows):
                 flags.append("summary_table")
             blk = ParsedBlock(

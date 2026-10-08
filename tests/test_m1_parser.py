@@ -21,6 +21,7 @@ from app.rag.pdf_parser import (
     inline_unit,
     is_numeric_table,
     looks_tabular,
+    merge_wrapped_labels,
     normalize_cell,
     parse_pdf,
     render_table,
@@ -314,6 +315,48 @@ def test_no_breakdown_when_a_year_spans_two_columns():
 
 
 # ── 无边框表格的坐标重建（P1-5 / P1-8） ──────────────────
+
+
+def test_wrapped_label_merged_back():
+    """折成两行的科目名要并回数据行，整词必须能完整出现。
+
+    取自广发证券年报第 19 页的真实版面：科目名折断后，
+    「经营活动产生的现金流量净额」这串字在整块里一次都不出现，
+    BM25 因此打不中，检索转而选了列宽些、科目名完整的母公司表，
+    最终答出「未找到」——而数据就在这张表里。
+    """
+    rows = [
+        ["项目", "2025 年", "2024 年", "2023 年"],
+        ["", "调整前", "调整后", "调整后"],
+        ["经营活动产生的现金流", "-27,780,960,722.97", "9,970,809,011.81", "-8,918,975,156.38"],
+        ["量净额（元）", "", "", ""],
+    ]
+    out = merge_wrapped_labels(rows)
+    assert len(out) == 3
+    assert out[2][0] == "经营活动产生的现金流量净额（元）"
+    # 子列头行紧跟在表头之后，上一行没有数值格，不能被并走
+    assert out[1][1] == "调整前"
+
+
+def test_wrapped_label_merge_leaves_real_rows_alone():
+    """三类容易误伤的行都不能动。"""
+    # ① 占位符撑起来的真数据行：`-` 不是中文，整行不算续行
+    rows = [
+        ["营业收入", "1,000.00", "2,000.00"],
+        ["其他收益", "-", "-"],
+    ]
+    assert merge_wrapped_labels(rows)[1][0] == "其他收益"
+
+    # ② 多格子列头（五格），超过两格的上限
+    rows = [
+        ["营业总收入", "35,492,783,045.20", "27,198,789,118.97"],
+        ["调整前", "调整后", "调整后"],
+    ]
+    assert len(merge_wrapped_labels(rows)) == 2
+
+    # ③ 表头里的「2025 年」不是数值，其后的子列头不会被并进表头
+    rows = [["项目", "2025 年", "2024 年"], ["增减", "", ""]]
+    assert len(merge_wrapped_labels(rows)) == 2
 
 
 def test_merged_cell_count_ignores_long_single_numbers():
