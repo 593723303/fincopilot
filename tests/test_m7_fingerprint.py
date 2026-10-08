@@ -41,3 +41,30 @@ def test_fingerprint_covers_parser_sources():
     assert "chunker.py" in PIPELINE_SOURCES
     # indexer.py 刻意不收：它只管写库与日志，收进来会让日志微调触发全量重算
     assert "indexer.py" not in PIPELINE_SOURCES
+
+
+def test_cache_namespace_includes_answer_fingerprint():
+    """缓存分区键必须带回答指纹，否则改了代码还会供应旧答案。
+
+    实测撞上过：修完科目名跨行折断、重新入库，再问同一个问题，
+    拿回来的仍是修复前那句「未找到」——命中的是上一版代码写的条目。
+    """
+    from app.rag.cache import cache_namespace
+    from app.rag.fingerprint import answer_fingerprint
+
+    exp = load_experiment()
+    ns = cache_namespace(exp)
+    assert exp.exp_id in ns
+    assert answer_fingerprint(exp) in ns
+    # Milvus 的 exp_id 字段是 VARCHAR(32)，超了整条写入会被拒
+    assert len(ns.encode("utf-8")) <= 32
+
+
+def test_answer_fingerprint_tracks_generation_config():
+    """生成配置变了，缓存必须换分区——同一个问题的答案会不一样。"""
+    from app.rag.fingerprint import answer_fingerprint
+
+    exp = load_experiment()
+    changed = exp.model_copy(deep=True)
+    changed.generation.require_citation = not exp.generation.require_citation
+    assert answer_fingerprint(changed) != answer_fingerprint(exp)

@@ -33,6 +33,7 @@ from typing import Any
 
 from app.config.experiment import Experiment
 from app.providers.registry import get_embeddings
+from app.rag.fingerprint import answer_fingerprint
 from app.store.milvus_schema import collection_names
 from app.store.redis_client import redis
 
@@ -93,6 +94,20 @@ def entity_key(company_codes: list[str], years: list[int], question: str = "") -
     return f"c={codes}|y={ys}|m={ms}"
 
 
+def cache_namespace(exp: Experiment) -> str:
+    """缓存的分区键：实验 ID + 回答指纹。
+
+    只按 exp_id 分区是不够的——同一个实验里改了解析器或提示词，
+    exp_id 一个字都不会变，于是缓存继续供应旧代码写进去的答案，
+    而且从外面完全看不出来。实测撞上过：修完科目名跨行折断、重新入库，
+    再问同一个问题，拿回来的仍是修复前那句「未找到」。
+
+    这与入库的 pipeline_hash 是同一条纪律（见 app/rag/fingerprint.py）。
+    Milvus 里 exp_id 字段是 VARCHAR(32)，截断到 32 字节以内。
+    """
+    return f"{exp.exp_id}@{answer_fingerprint(exp)}"[:32]
+
+
 def exact_key(question: str, exp_id: str, ekey: str) -> str:
     """精确缓存的键。
 
@@ -107,7 +122,7 @@ async def get_exact(question: str, exp: Experiment, ekey: str) -> dict[str, Any]
     if not exp.cache.exact:
         return None
     try:
-        raw = await redis().get(exact_key(question, exp.exp_id, ekey))
+        raw = await redis().get(exact_key(question, cache_namespace(exp), ekey))
     except Exception as exc:  # 缓存不可用不应影响主流程
         logger.warning("精确缓存读取失败：%s", exc)
         return None
@@ -119,7 +134,7 @@ async def put_exact(question: str, exp: Experiment, ekey: str, payload: dict) ->
         return
     try:
         await redis().setex(
-            exact_key(question, exp.exp_id, ekey),
+            exact_key(question, cache_namespace(exp), ekey),
             EXACT_TTL,
             json.dumps(payload, ensure_ascii=False),
         )
@@ -146,7 +161,7 @@ async def get_semantic(
             # 实体硬约束下推到检索层，而不是查回来再过滤：
             # 后置过滤会让 limit=1 被一个实体不符的近邻占掉，
             # 本来能命中的那条反而被挤出去。
-            filter=f'entity_key == "{ekey}" and exp_id == "{exp.exp_id}"',
+            filter=f'entity_key == "{ekey}" and exp_id == "{cache_namespace(exp)}"',
             output_fields=["answer_json"],
             search_params={"metric_type": "COSINE"},
         )
@@ -181,11 +196,11 @@ async def put_semantic(
             collection_name=_cache_collection(),
             data=[
                 {
-                    "cache_key": exact_key(question, exp.exp_id, ekey)[len(EXACT_PREFIX) :],
+                    "cache_key": exact_key(question, cache_namespace(exp), ekey)[len(EXACT_PREFIX) :],
                     "vector": vec,
                     "answer_json": body,
                     "entity_key": ekey[:256],
-                    "exp_id": exp.exp_id[:32],
+                    "exp_id": cache_namespace(exp),
                     # schema 里的字段一个都不能少：Milvus 对非 nullable 字段
                     # 直接拒绝整条写入，而且报错只说「missed a field」，
                     # 不会告诉你其余字段其实都对

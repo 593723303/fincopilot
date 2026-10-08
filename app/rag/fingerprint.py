@@ -80,3 +80,34 @@ def pipeline_fingerprint(exp: Experiment, embed_profile: str = "default") -> str
     spec = get_registry().embed_spec(embed_profile)
     h.update(f"{spec.model}:{spec.dim}".encode())
     return h.hexdigest()[:16]
+
+
+# 决定「同一个问题会得到什么答案」的代码。生成提示词与 Agent 循环都在这里。
+ANSWER_SOURCES = (Path("graph") / "nodes" / "rag.py", Path("graph") / "nodes" / "agent.py")
+
+
+def answer_fingerprint(exp: Experiment) -> str:
+    """影响回答内容的一切的指纹，12 位十六进制，用作缓存的命名空间。
+
+    缓存此前只按 `exp_id` 分区，于是它和入库有**完全相同的缺陷**：
+    索引修好了、提示词改了，缓存却还在供应旧答案，而 `exp_id` 没变，
+    从外面看不出任何异常。
+
+    实测就撞上过：修完「科目名跨行折断」、重新入库、再问同一个问题，
+    拿回来的仍是修复前那句「所提供资料中未找到」——
+    命中的是上一版代码写进去的条目。
+
+    这里把索引指纹、生成提示词与 Agent 循环的源码、以及检索与生成配置
+    一并算进去。与入库指纹不同的是，**这里过度失效几乎没有代价**：
+    缓存没命中只是重算一次，而入库没命中要重新花钱做 embedding。
+    所以判据取得比那边更宽。
+    """
+    h = hashlib.sha256()
+    h.update(pipeline_fingerprint(exp).encode())
+    app_root = Path(__file__).resolve().parents[1]
+    for rel in ANSWER_SOURCES:
+        h.update(hashlib.sha256((app_root / rel).read_bytes()).digest())
+    h.update(exp.retrieval.model_dump_json().encode())
+    h.update(exp.rerank.model_dump_json().encode())
+    h.update(exp.generation.model_dump_json().encode())
+    return h.hexdigest()[:12]

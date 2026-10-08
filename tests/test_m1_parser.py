@@ -17,11 +17,14 @@ from app.rag.pdf_parser import (
     STATEMENT_SCOPE,
     HeadingTracker,
     TableContext,
+    WordTable,
     count_merged_cells,
     inline_unit,
     is_numeric_table,
+    is_summary_table,
     looks_tabular,
     merge_wrapped_labels,
+    multi_value_rows,
     normalize_cell,
     parse_pdf,
     render_table,
@@ -418,3 +421,38 @@ def test_year_header_from_above_needs_two_years():
     assert len(YEAR_LABEL.findall("2025年 2024年 增减(%) 2023年")) == 3
     assert len(YEAR_LABEL.findall("本集团主要会计数据和财务指标")) == 0
     assert len(YEAR_LABEL.findall("2025年度报告（A股）")) == 1
+
+
+def test_multi_value_rows_counts_real_table_rows():
+    """「一行里有两个以上数值」是判断「这是不是一张表」的直接判据。"""
+    rows = [
+        ["项目", "2025 年", "2024 年"],
+        ["总资产", "13,898,471", "12,957,827"],
+        ["总负债", "12,482,483", "11,653,115"],
+        ["注：本公司对非经常性损益项目的确认依照规定执行", "", ""],
+    ]
+    # 表头的「2025 年」不是数值格，正文说明也不是——只有两行真数据
+    assert multi_value_rows(rows) == 2
+
+
+def test_word_table_quacks_like_pymupdf_table():
+    """拼出来的表要能冒充 pymupdf 的 Table 接上原流程。"""
+    t = WordTable((0.0, 1.0, 2.0, 3.0), [["a", "1,000"], ["b", "2,000"]])
+    assert t.extract() == [["a", "1,000"], ["b", "2,000"]]
+    assert t.bbox == (0.0, 1.0, 2.0, 3.0)
+
+
+def test_summary_table_detected_from_header_row():
+    """标题落在表第一行时也要认出汇总表。
+
+    按词坐标拼出来的表会把表格上方的标题收进第一格的兜底列，
+    于是标题既不在 heading 里也不在 caption 里。中国平安第 14 页就是这样：
+    caption 被取成紧挨着的「12月31日」，真标题躺在表的第一行。
+    """
+    rows = [
+        ["（人民币百万元） 财务摘要 主要会计数据及财务指标", "2025年", "2024年", "2023年"],
+        ["总资产", "13,898,471", "12,957,827", "11,583,417"],
+    ]
+    assert is_summary_table("", "12月31日", rows)
+    # 标题不出现时不能误判
+    assert not is_summary_table("", "12月31日", [["项目", "2025年", "2024年"], ["总资产", "1", "2"]])

@@ -584,6 +584,47 @@ def numeric_columns(words) -> list[tuple[float, float]]:
     ]
 
 
+# 回退成表至少要有这么多「一行里有两个以上数值」的行。
+# 门槛不高是因为前置条件已经很严（两种检测策略都颗粒无收 + 页面有成片数字），
+# 实测茅台这类规范年报整篇一页都不会走到这条分支。
+MIN_WORD_TABLE_ROWS = 3
+
+
+@dataclass
+class WordTable:
+    """从词坐标拼出来的表，冒充 pymupdf 的 Table 接上原有流程。
+
+    下游只用到 `.bbox` 与 `.extract()` 两样东西，够了。
+    """
+
+    bbox: tuple[float, float, float, float]
+    rows: list[list[str]]
+
+    def extract(self) -> list[list[str]]:
+        return self.rows
+
+
+def multi_value_rows(rows: list[list[str]]) -> int:
+    """有多少行在一行里出现了两个以上数值格——「这是不是一张表」的直接判据。"""
+    return sum(1 for row in rows if sum(1 for c in row if VALUE_CELL.search(c or "")) >= 2)
+
+
+def numeric_band(page: pymupdf.Page) -> tuple[float, float, float, float] | None:
+    """页面上成片数字所占的纵向区间。
+
+    回退成表时**不能拿整页当表格区域**：表格区域会被从正文里扣掉，
+    整页算表就等于把这一页的标题和说明文字一起吞了，
+    章节标题也就跟着丢了。只圈住数字覆盖的那一段，
+    上方的标题与「（人民币百万元）」这类量纲声明仍留在正文里被正常识别。
+    """
+    spans = [
+        (w[1], w[3]) for w in page.get_text("words") if GROUPED_NUMBER.search(w[4])
+    ]
+    if len(spans) < TABULAR_NUMBER_HINT:
+        return None
+    return (0.0, min(a for a, _ in spans), page.rect.width, max(b for _, b in spans))
+
+
 def rebuild_table_by_words(page: pymupdf.Page, bbox) -> list[list[str]]:
     """从词坐标重建表格。切不开就返回空，由调用方保留原结果。
 
@@ -669,7 +710,12 @@ def is_summary_table(heading: str, caption: str | None, rows: list[list[str]]) -
     （`lessons.md` 7.16：实测它在朴素查询下一次都没进过前 20）。
     打上标记后由检索层强制召回，不再靠关键词碰运气。
     """
-    where = f"{heading or ''} {caption or ''}"
+    # 表头行也要看：按词坐标拼出来的表会把表格上方的标题收进第一格的兜底列，
+    # 于是标题既不在 heading 里也不在 caption 里。中国平安第 14 页就是这样——
+    # caption 被取成了紧挨着的「12月31日」，真正的标题
+    # 「主要会计数据及财务指标」躺在表的第一行里。
+    head_text = " ".join(c or "" for row in rows[:2] for c in row)
+    where = f"{heading or ''} {caption or ''} {head_text}"
     if not SUMMARY_TABLE_TITLE.search(where):
         return False
     return year_label_count(rows) >= 2
@@ -757,6 +803,25 @@ def parse_pdf(path: str | Path, max_pages: int | None = None) -> ParsedDocument:
                 raw_tables = list(page.find_tables(strategy="text"))
                 if raw_tables:
                     logger.debug("第 %d 页改用文本策略抽出 %d 张表", i + 1, len(raw_tables))
+            # 两种策略都颗粒无收：直接按词坐标拼一张表出来。
+            # 中国平安 370 页里有 47 页是这种版面，中国石油 280 页里有 13 页，
+            # 此前这些页只能按正文处理——而正文提取会把相邻的数字**粘成一串**：
+            #     总资产13,898,47112,957,8277.311,583,417
+            # 数字连在一起等于数据丢了，这两家因此一条指标都抽不出来（P1-5）。
+            # 规范年报不受影响：茅台整篇 143 页一页都走不到这里。
+            if not raw_tables and looks_tabular(page_text):
+                band = numeric_band(page)
+                rebuilt = rebuild_table_by_words(page, band) if band else []
+                if multi_value_rows(rebuilt) >= MIN_WORD_TABLE_ROWS:
+                    if not year_label_count(rebuilt):
+                        words = page.get_text("words", clip=pymupdf.Rect(band))
+                        header = year_header_from_above(page, band, numeric_columns(words))
+                        if header:
+                            rebuilt = [header, *rebuilt]
+                    raw_tables = [WordTable(band, rebuilt)]
+                    logger.debug(
+                        "第 %d 页无可检出表格，按词坐标拼出 %d 行", i + 1, len(rebuilt)
+                    )
         except Exception as exc:  # 个别页版面异常不应中断整篇解析
             logger.warning("第 %d 页表格检测失败：%s", i + 1, exc)
             raw_tables = []
