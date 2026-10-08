@@ -4,9 +4,21 @@
     python -m scripts.ingest --pages 20           只处理前 20 页（省 embedding 费用）
     python -m scripts.ingest --exp exp01_baseline 指定实验配置（决定分块策略）
     python -m scripts.ingest --force              内容未变也强制重建
+    python -m scripts.ingest --prune              顺带清掉源文件已删除的文档
+    python -m scripts.ingest --stamp-pipeline     只补流水线指纹，不解析不花钱
 
 同一份文档可以在不同实验配置下并存入库：块按 strategy 字段隔离，
 互不干扰，这是 M4 消融实验能对比的前提（ADR-010）。
+
+### 什么时候会重新算向量
+
+跳过的条件是三件事同时成立：PDF 字节没变、**处理流水线指纹没变**、
+上次入库成功。第二条是后加的——此前只比对文件哈希，于是
+「改了解析器但 PDF 没动」会被直接跳过，索引静默停在旧版本上，
+而且没有任何指标看得出来（详见 `app/rag/fingerprint.py`）。
+
+加上之后，改解析器 / 分块器 / 分块参数 / embedding 模型都会自动触发重算，
+不必再记得手动加 `--force`。
 """
 
 from __future__ import annotations
@@ -20,7 +32,7 @@ from pymilvus import MilvusClient
 
 from app.config.experiment import load_experiment
 from app.config.settings import get_settings
-from app.rag.indexer import ingest_pdf
+from app.rag.indexer import ingest_pdf, prune_missing, stamp_pipeline
 from app.store.pg import close_pg, init_pg
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -33,7 +45,28 @@ async def main() -> int:
     parser.add_argument("--pages", type=int, default=None, help="只处理前 N 页")
     parser.add_argument("--exp", type=str, default=None, help="实验配置 ID")
     parser.add_argument("--force", action="store_true", help="内容未变也强制重建")
+    parser.add_argument(
+        "--prune",
+        action="store_true",
+        help="清掉 data/raw 里已不存在的文档的残留块（PG + Milvus）",
+    )
+    parser.add_argument(
+        "--stamp-pipeline",
+        action="store_true",
+        help="只把当前流水线指纹补写给所有 ready 文档，不解析、不重算向量",
+    )
     args = parser.parse_args()
+
+    # 只补指纹：不碰 Milvus，也不花钱。用于「确知这批语料就是用当前流水线
+    # 跑出来的」的场合——比如刚跑完一次全量 --force，只是当时还没有这一列。
+    if args.stamp_pipeline:
+        await init_pg()
+        try:
+            n = await stamp_pipeline(load_experiment(args.exp))
+        finally:
+            await close_pg()
+        print(f"已为 {n} 份 ready 文档补写流水线指纹")
+        return 0
 
     pdfs = [Path(f) for f in args.files] if args.files else sorted(RAW_DIR.glob("*.pdf"))
     if not pdfs:
@@ -51,6 +84,10 @@ async def main() -> int:
 
     await init_pg()
     client = MilvusClient(uri=settings.milvus_uri, token=settings.milvus_token or None)
+
+    if args.prune:
+        gone = await prune_missing(client, {p.name for p in pdfs}, exp.chunking.strategy)
+        print(f"  [prune] 清掉 {len(gone)} 份已不存在的文档：{'、'.join(gone) or '（无）'}")
 
     total_cost = 0.0
     results = []

@@ -26,6 +26,7 @@ from sqlalchemy import delete, select
 from app.config.experiment import Experiment, load_experiment
 from app.providers.registry import get_embeddings, get_registry
 from app.rag.chunker import ChunkUnit, chunk_document
+from app.rag.fingerprint import pipeline_fingerprint
 from app.rag.pdf_parser import parse_pdf
 from app.store.milvus_schema import (
     MAX_CONTENT_LEN,
@@ -168,6 +169,68 @@ def _write_milvus(client, rows: list[dict], doc_key: str, strategy: str) -> None
     client.flush(name)
 
 
+# ── 索引维护 ────────────────────────────────────────────
+
+
+async def stamp_pipeline(exp: Experiment | None = None) -> int:
+    """把当前流水线指纹补写给所有 ready 文档，返回更新条数。
+
+    `pipeline_hash` 这一列是后加的，列加上去的那一刻所有历史行都是 NULL，
+    于是下一次入库会把整个语料判成「来历不明」重算一遍。
+    但若这批语料**确实**刚用当前代码跑过，那次重算纯属浪费。
+
+    这个函数就是给那种场合用的：不解析、不调 embedding、不花钱，
+    只声明「现有索引是用这套流水线产出的」。
+
+    用错了会掩盖真实的过期——所以只在**刚跑完一次全量 `--force`**、
+    或明确知道索引与当前代码一致时才用。拿不准就别用，重算一遍而已。
+    """
+    exp = exp or load_experiment()
+    pipeline = pipeline_fingerprint(exp)
+    factory = session_factory()
+    async with factory() as session:
+        docs = (
+            (await session.execute(select(Document).where(Document.status == "ready")))
+            .scalars()
+            .all()
+        )
+        for doc in docs:
+            doc.pipeline_hash = pipeline
+        await session.commit()
+        return len(docs)
+
+
+async def prune_missing(client, present_filenames: set[str], strategy: str) -> list[str]:
+    """清掉源文件已不存在的文档，返回被清掉的 doc_key。
+
+    删掉一份 PDF 不会让它的向量跟着消失——检索照样能命中，
+    回答里照样会引用一份已经不在语料里的年报。入库流程只做「加」与「改」，
+    「减」此前完全没有出口。
+
+    PG 的 chunks 配了级联删除，Milvus 要按 doc_key + strategy 显式删。
+    """
+    name, _ = collection_names()
+    factory = session_factory()
+    removed: list[str] = []
+    async with factory() as session:
+        docs = (await session.execute(select(Document))).scalars().all()
+        for doc in docs:
+            if Path(doc.file_path).name in present_filenames:
+                continue
+            await session.execute(delete(Chunk).where(Chunk.doc_id == doc.id))
+            await session.delete(doc)
+            await asyncio.to_thread(
+                client.delete,
+                name,
+                filter=f'doc_key == "{doc.doc_key}" and strategy == "{strategy}"',
+            )
+            removed.append(doc.doc_key)
+        await session.commit()
+    if removed:
+        await asyncio.to_thread(client.flush, name)
+    return removed
+
+
 # ── 主流程 ──────────────────────────────────────────────
 
 
@@ -185,6 +248,7 @@ async def ingest_pdf(
     code, name, year = infer_meta(path)
     doc_key = f"{code}_{year}_annual"
     digest = file_hash(path)
+    pipeline = pipeline_fingerprint(exp)
 
     factory = session_factory()
 
@@ -194,8 +258,17 @@ async def ingest_pdf(
             await session.execute(select(Document).where(Document.doc_key == doc_key))
         ).scalar_one_or_none()
 
-        if existing and existing.content_hash == digest and existing.status == "ready" and not force:
-            logger.info("%s 内容未变且已就绪，跳过（force=True 可强制重建）", doc_key)
+        # 跳过的条件是三件事同时成立：文件没变、**处理流水线没变**、上次入库成功。
+        # 只看文件哈希会漏掉「改了解析器但 PDF 没动」——索引静默停在旧版本上，
+        # 而且没有任何指标会掉下来（本项目已为此踩坑两次，见 fingerprint.py）。
+        if (
+            existing
+            and existing.content_hash == digest
+            and existing.pipeline_hash == pipeline
+            and existing.status == "ready"
+            and not force
+        ):
+            logger.info("%s 内容与流水线均未变且已就绪，跳过（force=True 可强制重建）", doc_key)
             return IngestResult(
                 doc_id=existing.id,
                 doc_key=doc_key,
@@ -205,6 +278,15 @@ async def ingest_pdf(
             )
 
         if existing:
+            if existing.status == "ready" and existing.content_hash == digest and not force:
+                # 文件没动却要重算，只可能是流水线变了。记一笔，
+                # 否则重新入库时看不出来是「新文件」还是「代码改了」
+                logger.info(
+                    "%s 文件未变但流水线指纹已变（%s → %s），重新解析",
+                    doc_key,
+                    existing.pipeline_hash or "（无记录）",
+                    pipeline,
+                )
             doc = existing
             doc.content_hash = digest
             doc.file_path = str(path)
@@ -289,7 +371,14 @@ async def ingest_pdf(
         ]
         await asyncio.to_thread(_write_milvus, milvus_client, rows, doc_key, cfg.strategy)
 
-        await set_status("ready", chunk_count=len(units), index_cost=Decimal(str(cost)))
+        # 指纹只在**入库成功后**才落库：中途失败时留着旧指纹（或 NULL），
+        # 下次仍会重算；若提前写入，一次失败的入库会被后续误判成「已是最新」
+        await set_status(
+            "ready",
+            chunk_count=len(units),
+            index_cost=Decimal(str(cost)),
+            pipeline_hash=pipeline,
+        )
         logger.info(
             "%s 入库完成：%d 块（子块 %d），embedding 成本 ¥%.6f",
             doc_key,

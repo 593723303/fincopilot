@@ -54,6 +54,12 @@ class Document(Base):
     file_path: Mapped[str] = mapped_column(Text)
     # 幂等去重依据：同一份文件重复上传不重复消耗 embedding
     content_hash: Mapped[str] = mapped_column(String(64), index=True)
+    # 处理流水线的指纹（解析器/分块器源码 + 分块配置 + embedding 模型）。
+    # 与 content_hash 配对：两者都没变才允许跳过入库。
+    # 只比对文件哈希会漏掉「文件没变、但解析代码变了」这一整类变化——
+    # 索引静默停在旧版本上，而任何指标都看不出来（见 app/rag/fingerprint.py）。
+    # 可空：本列加入之前入库的行为 NULL，视为来历不明，必须重算。
+    pipeline_hash: Mapped[str | None] = mapped_column(String(32), nullable=True)
 
     page_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
     chunk_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
