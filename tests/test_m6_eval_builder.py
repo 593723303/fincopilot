@@ -121,14 +121,20 @@ def test_out_of_corpus_placeholders_are_not_in_the_corpus():
     """占位公司一旦被下载进 data/raw，拒答题就名存实亡。
 
     这条测试是给未来的自己看的：扩语料时很容易顺手把五粮液加进去。
+
+    2026-10-08 它真的抓到了一次——建 v5 时下载了比亚迪，
+    而比亚迪当时正在 default 组里。失败方式很安静：出题脚本会
+    自动跳过已入库的公司，不报错，只是拒答题凭空少一道。
     """
     from pathlib import Path
 
-    from scripts.build_eval_v2 import OUT_OF_CORPUS
+    from scripts.build_eval_v2 import REFUSE_SETS
 
     raw = Path(__file__).resolve().parents[1] / "data" / "raw"
     if not raw.exists():
         return  # CI 里没有语料，跳过
     downloaded = {p.name.split("_")[1] for p in raw.glob("*.pdf") if "_" in p.name}
-    clash = {c for c, _ in OUT_OF_CORPUS} & downloaded
+    # 每一组都要查，不能只查 default：扩语料时撞上的可能是任意一组
+    everyone = {c for group in REFUSE_SETS.values() for c, _ in group}
+    clash = everyone & downloaded
     assert not clash, f"这些公司既是拒答占位又已入库：{clash}"
