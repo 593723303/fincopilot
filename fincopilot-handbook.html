@@ -1,0 +1,1125 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<meta name="description" content="FinCopilot 项目手册：业务、架构、运行、改法、排错与读码路径。">
+<title>FinCopilot 项目手册</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@400;500;700&family=Source+Serif+4:opsz,wght@8..60,400;8..60,600;8..60,700&family=IBM+Plex+Mono:wght@400;500&display=swap">
+
+<style>
+:root{
+  --paper:#F4F6F4; --surface:#FFFFFF; --surface-2:#EDF0EC;
+  --ink:#16201E; --ink-2:#3C4A46; --muted:#6B7874;
+  --line:#DCE2DD; --line-strong:#C3CCC6;
+  --brass:#8A5E22; --brass-soft:#F0E6D4;
+  --viridian:#2C6A58; --viridian-soft:#DDEAE4;
+  --alarm:#9B3B2E; --alarm-soft:#F4E2DE;
+  --code-bg:#EEF1ED;
+  --shadow:0 1px 2px rgba(22,32,30,.05), 0 8px 24px -16px rgba(22,32,30,.28);
+  --radius:3px;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --paper:#101413; --surface:#171D1B; --surface-2:#1E2522;
+    --ink:#E6ECE8; --ink-2:#BCC7C2; --muted:#8A9995;
+    --line:#2A3330; --line-strong:#3A4541;
+    --brass:#D2A058; --brass-soft:#2B2317;
+    --viridian:#6FB69C; --viridian-soft:#172622;
+    --alarm:#D98471; --alarm-soft:#2A1A17;
+    --code-bg:#1C2321;
+    --shadow:0 1px 2px rgba(0,0,0,.4), 0 8px 24px -16px rgba(0,0,0,.8);
+  }
+}
+:root[data-theme="dark"]{
+  --paper:#101413; --surface:#171D1B; --surface-2:#1E2522;
+  --ink:#E6ECE8; --ink-2:#BCC7C2; --muted:#8A9995;
+  --line:#2A3330; --line-strong:#3A4541;
+  --brass:#D2A058; --brass-soft:#2B2317;
+  --viridian:#6FB69C; --viridian-soft:#172622;
+  --alarm:#D98471; --alarm-soft:#2A1A17;
+  --code-bg:#1C2321;
+  --shadow:0 1px 2px rgba(0,0,0,.4), 0 8px 24px -16px rgba(0,0,0,.8);
+}
+
+*{box-sizing:border-box}
+body{
+  margin:0; background:var(--paper); color:var(--ink);
+  font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","HarmonyOS Sans SC","Microsoft YaHei","Segoe UI",system-ui,sans-serif;
+  font-size:16px; line-height:1.75; -webkit-font-smoothing:antialiased;
+}
+.wrap{max-width:1220px;margin:0 auto;padding:0 28px}
+@media (min-width:1080px){
+  .wrap{display:grid;grid-template-columns:200px minmax(0,1fr);gap:56px;padding:0 40px}
+}
+main{max-width:82ch;min-width:0;padding-bottom:120px}
+
+header.mast{border-bottom:1px solid var(--line-strong);margin-bottom:48px;padding:64px 0 26px}
+.eyebrow{
+  font-family:"IBM Plex Mono",ui-monospace,Consolas,monospace;
+  font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:var(--brass);
+  display:flex;gap:14px;flex-wrap:wrap;margin-bottom:20px;
+}
+.eyebrow span:not(:first-child)::before{content:"·";margin-right:14px;color:var(--line-strong)}
+h1{
+  font-family:"Source Serif 4","Noto Serif SC",Georgia,serif;
+  font-weight:700;font-size:clamp(31px,5vw,44px);line-height:1.2;margin:0 0 18px;
+  text-wrap:balance;letter-spacing:-.01em;
+}
+.standfirst{font-size:17px;color:var(--ink-2);margin:0;max-width:62ch;
+  font-family:"Source Serif 4","Noto Serif SC",Georgia,serif}
+
+nav.toc{display:none}
+@media (min-width:1080px){
+  nav.toc{display:block;position:sticky;top:0;align-self:start;padding-top:64px;height:100vh;overflow-y:auto}
+  nav.toc ol{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:1px}
+  nav.toc a{display:block;padding:4px 0 4px 12px;font-size:12.5px;color:var(--muted);
+    text-decoration:none;border-left:2px solid transparent;transition:color .15s,border-color .15s;line-height:1.5}
+  nav.toc a:hover{color:var(--ink)}
+  nav.toc a.on{color:var(--brass);border-left-color:var(--brass)}
+  nav.toc .toc-h{font-family:"IBM Plex Mono",ui-monospace,monospace;font-size:10px;
+    letter-spacing:.16em;text-transform:uppercase;color:var(--muted);margin:0 0 14px;padding-left:12px}
+  nav.toc .gap{height:10px}
+}
+
+section{margin:0 0 76px;scroll-margin-top:24px}
+h2{font-family:"Source Serif 4","Noto Serif SC",Georgia,serif;font-size:27px;font-weight:600;
+  line-height:1.3;margin:0 0 8px;text-wrap:balance}
+h2 .num{font-family:"IBM Plex Mono",ui-monospace,monospace;font-size:12px;color:var(--brass);
+  display:block;letter-spacing:.14em;margin-bottom:10px;font-weight:500}
+h3{font-family:"Source Serif 4","Noto Serif SC",Georgia,serif;font-size:19.5px;font-weight:600;
+  margin:40px 0 10px;text-wrap:balance}
+h4{font-size:15px;font-weight:600;margin:26px 0 8px}
+p{margin:0 0 16px}
+.lede{color:var(--ink-2);margin-bottom:26px}
+code{font-family:"IBM Plex Mono",ui-monospace,Consolas,monospace;font-size:.86em;
+  background:var(--code-bg);padding:1.5px 5px;border-radius:2px;color:var(--ink-2);overflow-wrap:anywhere}
+pre{background:var(--code-bg);border:1px solid var(--line);border-radius:var(--radius);
+  padding:16px 18px;overflow-x:auto;margin:20px 0;line-height:1.65}
+pre code{background:none;padding:0;font-size:12.5px;color:var(--ink-2);white-space:pre}
+a{color:var(--brass);text-underline-offset:3px}
+a:focus-visible{outline:2px solid var(--brass);outline-offset:3px}
+strong{font-weight:600}
+hr{border:0;border-top:1px solid var(--line);margin:40px 0}
+
+.tbl-scroll{overflow-x:auto;margin:22px 0;border:1px solid var(--line);
+  border-radius:var(--radius);background:var(--surface)}
+table{border-collapse:collapse;width:100%;font-size:14.5px;min-width:600px}
+th,td{text-align:left;padding:11px 15px;border-bottom:1px solid var(--line);vertical-align:top}
+thead th{font-family:"IBM Plex Mono",ui-monospace,monospace;font-size:10.5px;letter-spacing:.1em;
+  text-transform:uppercase;color:var(--muted);font-weight:500;background:var(--surface-2);
+  border-bottom:1px solid var(--line-strong);white-space:nowrap}
+tbody tr:last-child td{border-bottom:0}
+td.nw{white-space:nowrap}
+td.mono,.tnum{font-family:"IBM Plex Mono",ui-monospace,monospace;font-variant-numeric:tabular-nums}
+
+.note{border-left:2px solid var(--brass);background:var(--brass-soft);padding:17px 21px;
+  margin:26px 0;border-radius:0 var(--radius) var(--radius) 0}
+.note.good{border-left-color:var(--viridian);background:var(--viridian-soft)}
+.note.warn{border-left-color:var(--alarm);background:var(--alarm-soft)}
+.note p:last-child{margin-bottom:0}
+.note .lbl{font-family:"IBM Plex Mono",ui-monospace,monospace;font-size:10px;letter-spacing:.16em;
+  text-transform:uppercase;display:block;margin-bottom:7px;color:var(--brass)}
+.note.good .lbl{color:var(--viridian)}
+.note.warn .lbl{color:var(--alarm)}
+
+/* 术语表 */
+.terms{display:flex;flex-direction:column;gap:0;border-top:1px solid var(--line);margin:24px 0}
+.term{display:grid;grid-template-columns:1fr;gap:4px;padding:16px 0;border-bottom:1px solid var(--line)}
+@media (min-width:720px){.term{grid-template-columns:150px 1fr;gap:20px}}
+.term dt{font-weight:600;font-size:15px}
+.term dt span{display:block;font-family:"IBM Plex Mono",monospace;font-size:10.5px;
+  color:var(--muted);letter-spacing:.06em;font-weight:400;margin-top:2px}
+.term dd{margin:0;font-size:14.8px;color:var(--ink-2)}
+.term dd .at{display:block;margin-top:5px;font-size:13px;color:var(--muted)}
+
+/* 流程阶梯 */
+.flow{list-style:none;margin:24px 0;padding:0;counter-reset:fl}
+.flow li{display:grid;grid-template-columns:30px 1fr;gap:16px;padding:15px 0;
+  border-bottom:1px solid var(--line);align-items:start}
+.flow li:last-child{border-bottom:0}
+.flow li::before{counter-increment:fl;content:counter(fl,decimal-leading-zero);
+  font-family:"IBM Plex Mono",ui-monospace,monospace;font-size:11px;color:var(--brass);
+  padding-top:5px;font-variant-numeric:tabular-nums}
+.flow .ft{font-weight:600;margin:0 0 3px}
+.flow .fd{margin:0;font-size:14.5px;color:var(--ink-2)}
+.flow .fp{font-family:"IBM Plex Mono",ui-monospace,monospace;font-size:12px;color:var(--muted);
+  display:block;margin-top:5px;overflow-wrap:anywhere}
+
+/* 操作手册卡片 */
+.howto{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);
+  box-shadow:var(--shadow);margin:0 0 16px;overflow:hidden}
+.howto > summary{list-style:none;cursor:pointer;padding:16px 20px;display:flex;
+  gap:14px;align-items:baseline;justify-content:space-between}
+.howto > summary::-webkit-details-marker{display:none}
+.howto > summary:hover{background:var(--surface-2)}
+.howto .ht{font-weight:600;font-size:15.5px}
+.howto .hh{font-family:"IBM Plex Mono",monospace;font-size:11px;color:var(--muted);
+  white-space:nowrap;letter-spacing:.06em}
+.howto-body{padding:4px 20px 20px;border-top:1px solid var(--line)}
+.howto-body > *:first-child{margin-top:16px}
+.howto-body ol{margin:0;padding-left:20px;display:flex;flex-direction:column;gap:9px;font-size:14.8px}
+.howto-body ol ul{margin:6px 0 0;padding-left:18px}
+
+.lines{list-style:none;margin:16px 0;padding:0;display:flex;flex-direction:column;gap:13px}
+.lines li{padding-left:20px;position:relative}
+.lines li::before{content:"—";position:absolute;left:0;top:0;color:var(--brass);
+  font-family:"IBM Plex Mono",monospace;font-size:13px}
+
+.check{list-style:none;margin:16px 0;padding:0;display:flex;flex-direction:column;gap:9px}
+.check li{padding-left:26px;position:relative;font-size:15px}
+.check li::before{content:"□";position:absolute;left:0;top:-1px;color:var(--viridian);font-size:16px}
+
+footer{border-top:1px solid var(--line-strong);padding:26px 0 60px;margin-top:40px;
+  font-size:13px;color:var(--muted);display:flex;justify-content:space-between;gap:20px;flex-wrap:wrap}
+footer .mono{font-family:"IBM Plex Mono",monospace;font-size:11px;letter-spacing:.08em}
+
+@media (prefers-reduced-motion: reduce){*{transition:none!important;animation:none!important}}
+</style>
+
+</head>
+<body>
+<div class="wrap">
+<nav class="toc" aria-label="目录">
+  <p class="toc-h">目录</p>
+  <ol>
+    <li><a href="#use">这份文档怎么用</a></li>
+    <li><a href="#terms">零基础术语表</a></li>
+    <div class="gap"></div>
+    <li><a href="#what">一、这个项目是什么</a></li>
+    <li><a href="#stack">二、技术栈与目录</a></li>
+    <li><a href="#run">三、跑起来</a></li>
+    <div class="gap"></div>
+    <li><a href="#overview">四、系统全景</a></li>
+    <li><a href="#offline">五、入库链路</a></li>
+    <li><a href="#chunk">六、一个块长什么样</a></li>
+    <li><a href="#online">七、问答链路</a></li>
+    <li><a href="#config">八、配置系统</a></li>
+    <li><a href="#eval">九、评估体系</a></li>
+    <div class="gap"></div>
+    <li><a href="#howto">十、常见操作手册</a></li>
+    <li><a href="#trouble">十一、故障排查</a></li>
+    <li><a href="#limits">十二、已知边界</a></li>
+    <li><a href="#path">十三、七天学习路径</a></li>
+    <li><a href="#lookup">十四、速查表</a></li>
+  </ol>
+</nav>
+
+<main>
+
+<header class="mast">
+  <p class="eyebrow"><span>FinCopilot</span><span>项目手册 / 交接文档</span><span>app 5784 行</span></p>
+  <h1>FinCopilot 项目手册</h1>
+  <p class="standfirst">一份能让人从零<strong>看懂、跑起来、改得动</strong>的完整说明：业务在做什么、PDF 怎么变成能检索的块、提问时数据怎么被取回来、每个参数在哪里改、出了问题怎么查。</p>
+</header>
+
+<section id="use">
+  <h2><span class="num">00</span>这份文档怎么用</h2>
+  <p class="lede">按你的目的挑路径，不用从头读到尾。</p>
+  <div class="tbl-scroll">
+  <table>
+    <thead><tr><th>你的目的</th><th>读这几节</th><th>大概耗时</th></tr></thead>
+    <tbody>
+      <tr><td><strong>只想知道它是什么</strong></td><td>术语表 → 一 → 四</td><td>30 分钟</td></tr>
+      <tr><td><strong>想在自己机器上跑起来</strong></td><td>二 → 三 → 十一（出问题时）</td><td>1–2 小时</td></tr>
+      <tr><td><strong>想看懂代码</strong></td><td>十三（七天路径）为主线，其余按需跳转</td><td>七天</td></tr>
+      <tr><td><strong>想改点东西</strong></td><td>八 → 十 → 十四</td><td>按需</td></tr>
+      <tr><td><strong>接手维护</strong></td><td>全部，重点是九、十一、十二</td><td>两三天</td></tr>
+    </tbody>
+  </table>
+  </div>
+  <p>项目内还有四份文档配合看：<code>README.md</code>（现状与指标）、<code>fincopilot-architecture.html</code>（22 章架构设计与 22 条决策记录）、<code>docs/lessons.md</code>（28 条踩坑记录）、<code>docs/benchmarks.md</code>（实验数据）、<code>docs/open-issues.md</code>（未解决问题与下一步）。</p>
+</section>
+
+<section id="terms">
+  <h2><span class="num">0A</span>零基础术语表</h2>
+  <p class="lede">看代码之前先把这十四个词弄清楚。每条都标了它在本项目的哪个文件里。</p>
+
+  <dl class="terms">
+    <div class="term"><dt>RAG<span>检索增强生成</span></dt><dd>先去资料库里把相关内容找出来，再连同问题一起交给大模型回答。好处是模型答的是你的资料、能标出处；坏处是找错了就答错。<span class="at">整个项目就是一套 RAG 系统</span></dd></div>
+
+    <div class="term"><dt>块<span>chunk</span></dt><dd>资料不能整本丢给模型（装不下也不精准），要切成几百字的小片。每一片就是一个"块"。切得好不好，直接决定检索准不准。<span class="at">app/rag/chunker.py</span></dd></div>
+
+    <div class="term"><dt>父子块<span>small-to-big</span></dt><dd>一个两难：块小了检索准但上下文不全，块大了上下文全但检索不准。解法是切两层——用小块（子块）去匹配，命中后换成它所属的大块（父块）送给模型。<span class="at">chunker.py 的 level 字段；retrievers.py:313 expand_parents</span></dd></div>
+
+    <div class="term"><dt>Embedding<span>向量化</span></dt><dd>把一段文字变成一串数字（本项目是 1024 个），意思相近的文字对应的数字串也相近。这样"找相关内容"就变成了"找数字串距离最近的"。<span class="at">模型 text-embedding-v4，调用在 indexer.py:92</span></dd></div>
+
+    <div class="term"><dt>向量数据库<span>Milvus</span></dt><dd>专门存这些数字串、并能在百万条里毫秒级找出最近邻的数据库。本项目用 Milvus 3.x。<span class="at">app/store/milvus_schema.py</span></dd></div>
+
+    <div class="term"><dt>HNSW</dt><dd>向量库里最常用的索引结构。它找的是"足够近"而不是"绝对最近"——用一点精度换几百倍速度。<code>M</code> 和 <code>efSearch</code> 两个参数控制这个取舍。<span class="at">configs/settings.yaml 的 milvus.index</span></dd></div>
+
+    <div class="term"><dt>BM25<span>稀疏检索 / 关键词检索</span></dt><dd>传统的关键词匹配打分算法。它不懂语义，但对专有名词、数字、生僻词特别准——正好补向量检索的短板。<span class="at">Milvus 内置 Function，从 content 自动生成 sparse_vector</span></dd></div>
+
+    <div class="term"><dt>混合检索<span>hybrid</span></dt><dd>向量和 BM25 各查一遍，再把两份结果合成一份。本项目两路各取 20 条。<span class="at">retrievers.py:214 retrieve</span></dd></div>
+
+    <div class="term"><dt>RRF<span>倒数排名融合</span></dt><dd>合并两份排名的办法：不比较分数（两套分数没有可比性），只看名次，每条的得分是 <code>1/(k+名次)</code> 之和。本项目 <code>k=60</code>。<span class="at">pymilvus 的 RRFRanker(60)</span></dd></div>
+
+    <div class="term"><dt>重排<span>rerank</span></dt><dd>检索完再用一个更贵但更准的模型把结果重新排序。业界默认"加了总没坏处"——<strong>本项目实测掉 6.1 点，已关闭</strong>，原因见第七节。<span class="at">app/providers/reranker.py；开关在实验配置里</span></dd></div>
+
+    <div class="term"><dt>Agent<span>智能体</span></dt><dd>让模型自己决定"下一步该调用哪个工具"，循环多次直到能回答。本项目用它处理需要多次查、或需要计算的问题。<span class="at">app/graph/nodes/agent.py</span></dd></div>
+
+    <div class="term"><dt>ReAct</dt><dd>Agent 最常见的写法：思考 → 调用工具 → 看结果 → 再思考，循环。必须配护栏（最多几步、失败几次停、花多少钱停），否则会无限转圈烧钱。<span class="at">agent.py:112 agent_node，护栏阈值在实验配置 agent 段</span></dd></div>
+
+    <div class="term"><dt>消融实验<span>ablation</span></dt><dd>一次只改一个因素，跑同一套题，看指标变化多少。这是判断"某个优化到底有没有用"的唯一可靠办法。<span class="at">configs/experiments/*.yaml，一个文件一组实验</span></dd></div>
+
+    <div class="term"><dt>置信区间 / 留出集</dt><dd>题目数量有限时，正确率本身带随机性。置信区间给出"真实水平大概在哪个范围"；两组区间重叠就<strong>不能说有提升</strong>。留出集是一批开发期间完全没碰过的题，用来检验你是不是只是把参数调得贴合了旧题目。<span class="at">eval/metrics.py:304 bootstrap_ci</span></dd></div>
+  </dl>
+</section>
+
+<section id="what">
+  <h2><span class="num">01</span>一、这个项目是什么</h2>
+  <p class="lede">给定一批 A 股上市公司的年报 PDF，回答关于其中财务数据的问题——<strong>每个数字标注来源页码，查不到就明说查不到</strong>。</p>
+
+  <p>它和普通 RAG demo 的区别，在于防的是一类特定失败：<strong>看起来完全正确的错误答案</strong>。数字格式对、引用齐全、单位也写了，但答的是另一年、另一个口径、另一家公司——用户从输出上完全发现不了。这类错误比胡编乱造危险得多。</p>
+
+  <p>三个来源，全是中文年报特有的：</p>
+  <div class="tbl-scroll">
+  <table>
+    <thead><tr><th>难点</th><th>具体表现</th><th>后果</th><th>怎么解的</th></tr></thead>
+    <tbody>
+      <tr><td><strong>量纲混用</strong></td><td>茅台用「元」，宁德时代用「千元」，招行用「百万元」</td><td>跨公司比较差 1000 倍</td><td>解析时把 <code>【单位：千元】</code> <strong>写进块的正文</strong></td></tr>
+      <tr><td><strong>报表口径</strong></td><td>合并报表 ≠ 母公司报表；营业收入 ≠ 营业总收入</td><td>数值差近一倍，且两张表解析出来<strong>逐字相同</strong></td><td>口径标题跨页继承，同样写进正文</td></tr>
+      <tr><td><strong>表格结构</strong></td><td>跨页、合并单元格、三年并列、无边框</td><td>年份张冠李戴</td><td>坐标重建兜底；三年表展开成 <code>【按年份】</code> 行</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <div class="note good">
+    <span class="lbl">贯穿全项目的一条原则</span>
+    <p><strong>程序能确定地做出来的结构，不要留给模型去推断。</strong>单位、口径、年份归属都属于这类——解析阶段就能确定，所以全部在解析阶段写死进文本，而不是指望模型生成时猜对。读代码时你会看到这条原则反复出现，它是理解大部分设计选择的钥匙。</p>
+  </div>
+</section>
+
+<section id="stack">
+  <h2><span class="num">02</span>二、技术栈与目录</h2>
+  <p class="lede">标准的 Python 异步后端 + 三存储 + LangGraph 编排。没有自研框架，每层都是主流选型。Python ≥ 3.11。</p>
+
+  <div class="tbl-scroll">
+  <table>
+    <thead><tr><th>层</th><th>选型</th><th>代码位置</th><th>一句话</th></tr></thead>
+    <tbody>
+      <tr><td>Web 框架</td><td>FastAPI</td><td><code>app/main.py</code>、<code>app/api/</code></td><td>三个路由：chat、documents、health</td></tr>
+      <tr><td>编排</td><td><strong>LangGraph 1.2</strong></td><td><code>app/graph/</code></td><td>整个问答流程是一张状态图，<strong>核心</strong></td></tr>
+      <tr><td>LLM 接入</td><td>LangChain 1.4 + OpenAI 兼容协议</td><td><code>app/providers/registry.py</code></td><td>配置表 + 工厂函数，换厂商不写代码</td></tr>
+      <tr><td>模型</td><td>阿里百炼 qwen-plus / flash / turbo</td><td><code>configs/models.yaml</code></td><td>五个 profile：strong/cheap/light/judge/light_alt</td></tr>
+      <tr><td>向量库</td><td><strong>Milvus 3.x</strong></td><td><code>app/store/milvus_schema.py</code></td><td>dense + sparse 双向量，内置 BM25</td></tr>
+      <tr><td>关系库</td><td>PostgreSQL 16 + SQLAlchemy 2.0 async</td><td><code>app/store/models.py</code></td><td>7 张表，Alembic 管迁移</td></tr>
+      <tr><td>缓存 / 队列</td><td>Redis 7 + arq</td><td><code>app/store/redis_client.py</code>、<code>queue.py</code></td><td>精确缓存 + 入库任务队列</td></tr>
+      <tr><td>PDF 解析</td><td>PyMuPDF</td><td><code>app/rag/pdf_parser.py</code></td><td>950 行，全项目最复杂的文件</td></tr>
+      <tr><td>前端</td><td>Chainlit</td><td><code>frontend/app.py</code></td><td>对话界面，能看工具调用轨迹</td></tr>
+      <tr><td>可观测</td><td>Langfuse</td><td><code>app/observability/</code></td><td>trace + 成本核算；未配 Key 时静默跳过</td></tr>
+      <tr><td>测试 / 规范</td><td>pytest（asyncio auto）+ ruff</td><td><code>tests/</code>，11 个文件</td><td><code>pytest</code> / <code>ruff check .</code></td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <h3>目录结构</h3>
+<pre><code>app/
+├── main.py         FastAPI 入口，lifespan 里初始化五个连接
+├── worker.py       离线任务 Worker（arq），与 API 同镜像不同启动命令
+├── api/            chat.py 问答 / documents.py 文档管理 / health.py 探针
+├── config/         settings.py 环境配置、experiment.py 实验配置
+├── graph/       ★  build.py 图装配、state.py 状态、nodes/ 四个节点、tools.py 工具
+│   └── nodes/      query.py 查询理解、rag.py RAG 四步、agent.py ReAct 循环
+├── rag/         ★  pdf_parser.py 解析 → chunker.py 切块 → indexer.py 入库
+│                   retrievers.py 检索 → cache.py 两级缓存
+├── providers/      registry.py 模型工厂、reranker.py
+├── store/          models.py(PG 表) milvus_schema.py pg.py milvus.py redis_client.py queue.py
+├── observability/  cost.py 成本核算、tracing.py Langfuse
+└── schemas/        请求/响应的 pydantic 模型
+
+scripts/   smoke 冒烟 → init_stores 建表 → fetch_reports 下载 → ingest 入库
+           probe_pdf / probe_milvus 探查、extract_key_metrics / build_eval_v2 造评估集
+eval/      run.py 评估入口、metrics.py 判定逻辑、datasets/*.jsonl 题目、reports/ 报告
+configs/   models.yaml 模型表、settings.yaml 运行配置、experiments/*.yaml 七组实验
+tests/     11 个测试文件，按里程碑 m0–m7 划分
+migrations/ Alembic 迁移</code></pre>
+</section>
+
+<section id="run">
+  <h2><span class="num">03</span>三、跑起来</h2>
+  <p class="lede">全程约 1 小时，其中入库最花时间。<strong>每一步都有验收标准，不要跳过验收直接做下一步。</strong></p>
+
+  <h3>前置</h3>
+  <ul class="lines">
+    <li><strong>Python 3.11+</strong>（<code>requires-python = "&gt;=3.11"</code>）</li>
+    <li><strong>Podman 或 Docker</strong>，用来起 PostgreSQL / Redis / Milvus</li>
+    <li><strong>一个阿里云百炼的 API Key</strong>（<code>DASHSCOPE_API_KEY</code>）。LLM、Embedding、Rerank 都走它。DeepSeek 的 Key 可以留空</li>
+    <li>磁盘：Milvus 全家桶 + 年报 PDF，预留 5–10 GB</li>
+  </ul>
+
+  <h3>第 1 步 · 起存储</h3>
+<pre><code>podman compose up -d        # 或 docker compose up -d</code></pre>
+  <p>起五个容器：<code>postgres</code>(5432)、<code>redis</code>(6379)、<code>etcd</code>、<code>minio</code>、<code>milvus</code>(19530 / 9091)。后两个是 Milvus 的依赖，不用管。</p>
+  <p><strong>验收</strong>：<code>podman ps</code> 看到五个容器都是 healthy。Milvus 首次启动要 1–2 分钟，没 healthy 就等。</p>
+  <div class="note">
+    <p><code>docker-compose.yml</code> 里还有 <code>api</code> / <code>worker</code> / <code>ui</code> 三个服务，挂在 <code>full</code> profile 下，<code>up -d</code> 不会启动它们。本地开发时代码在宿主机跑，这是对的。</p>
+  </div>
+
+  <h3>第 2 步 · 装依赖、配环境变量</h3>
+<pre><code>python -m venv .venv
+.venv\Scripts\activate          # Windows；macOS/Linux 用 source .venv/bin/activate
+pip install -e ".[dev]"
+copy .env.example .env          # 然后编辑 .env，填 DASHSCOPE_API_KEY</code></pre>
+
+  <p><code>.env</code> 的全部变量：</p>
+  <div class="tbl-scroll">
+  <table>
+    <thead><tr><th>变量</th><th>说明</th><th>必填</th></tr></thead>
+    <tbody>
+      <tr><td class="mono">DASHSCOPE_API_KEY</td><td>阿里百炼，LLM / Embedding / Rerank 都用它</td><td><strong>是</strong></td></tr>
+      <tr><td class="mono">DEEPSEEK_API_KEY</td><td>备用厂商，用于降级和评判模型</td><td>否</td></tr>
+      <tr><td class="mono">POSTGRES_DSN</td><td>默认值对应 compose，直接用</td><td>有默认</td></tr>
+      <tr><td class="mono">REDIS_URL</td><td>同上</td><td>有默认</td></tr>
+      <tr><td class="mono">MILVUS_URI</td><td>同上</td><td>有默认</td></tr>
+      <tr><td class="mono">LANGFUSE_*</td><td>可观测平台，留空则静默跳过上报</td><td>否</td></tr>
+      <tr><td class="mono">EXP_ID</td><td>默认用哪组实验配置，如 <code>exp00_debug</code></td><td>有默认</td></tr>
+      <tr><td class="mono">LOG_LEVEL</td><td>排查问题时改成 <code>DEBUG</code>，能看到检索细节</td><td>有默认</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <div class="note warn">
+    <span class="lbl">Windows 必看</span>
+    <p>连接串里<strong>必须用 <code>127.0.0.1</code> 而不是 <code>localhost</code></strong>。Windows 上 localhost 优先解析到 IPv6 的 <code>::1</code>，而容器端口转发只监听 IPv4——用 localhost 会一直挂起到超时，而且错误信息完全看不出是解析问题。<code>.env.example</code> 里已经是对的，别改。</p>
+  </div>
+
+  <h3>第 3 步 · 冒烟检查（不花钱）</h3>
+<pre><code>python -m scripts.smoke         # 检查配置与三个存储的连通性
+python -m scripts.smoke --llm   # 额外真调一次模型（会产生少量费用）</code></pre>
+  <p><strong>验收</strong>：三个存储全绿。有红的先回第 1 步，不要往下走。</p>
+
+  <h3>第 4 步 · 建表</h3>
+<pre><code>python -m alembic upgrade head   # PostgreSQL 的表
+python -m scripts.init_stores    # Milvus 的 collection（幂等，加 --drop 可重建）</code></pre>
+  <p>两个库分工不同：PG 的表结构由 Alembic 管迁移；<strong>Milvus 没有迁移工具，schema 改了只能显式重建</strong>（<code>--drop</code> 会清空向量数据，要重新入库）。</p>
+
+  <h3>第 5 步 · 下载年报</h3>
+<pre><code>python -m scripts.fetch_reports                 # 默认样本
+python -m scripts.fetch_reports 600519 000858   # 指定股票代码
+python -m scripts.fetch_reports --years 2       # 每只取最近 2 份</code></pre>
+  <p>从巨潮资讯网（证监会指定披露平台）下载官方原件，存到 <code>data/raw/</code>。</p>
+  <p><strong>验收</strong>：<code>data/raw/</code> 下有形如 <code>600519_贵州茅台_xxx2025年年度报告.pdf</code> 的文件。<strong>文件名格式是硬要求</strong>——公司代码、名称、年度全靠正则从文件名推断，格式不对会直接报错。</p>
+
+  <h3>第 6 步 · 入库</h3>
+<pre><code>python -m scripts.ingest                  # 入库 data/raw 下全部 PDF，约 ¥0.15/份
+python -m scripts.ingest --pages 20       # 只处理前 20 页，省钱，先试这个
+python -m scripts.ingest --exp exp01_baseline   # 指定实验配置（决定分块策略）
+python -m scripts.ingest --force          # 内容没变也强制重建</code></pre>
+  <p>这一步最慢，一份年报几分钟。<strong>第一次建议先用 <code>--pages 20</code> 跑通流程</strong>，确认无误再跑全量。</p>
+  <p><strong>验收</strong>：日志里有「分块 xxx（策略=heading）：父块 N，子块 M」，且没有报错。</p>
+
+  <h3>第 7 步 · 起服务</h3>
+<pre><code>uvicorn app.main:app                           # 后端，8000
+chainlit run frontend/app.py --port 8001       # 前端，另开一个终端
+arq app.worker.Settings                        # Worker，只在用上传接口时需要</code></pre>
+  <p>打开 <code>http://127.0.0.1:8001</code>。</p>
+
+  <h3>第 8 步 · 验收：问五个问题</h3>
+  <p>按顺序问，能看出系统的层次：</p>
+  <div class="tbl-scroll">
+  <table>
+    <thead><tr><th>问题</th><th>应该看到什么</th></tr></thead>
+    <tbody>
+      <tr><td>贵州茅台2025年营业收入是多少？</td><td>走 rag 分支，答案里带页码引用</td></tr>
+      <tr><td>贵州茅台2025年四个季度的营业收入合计是多少？</td><td>走 agent 分支，前端显示工具调用轨迹</td></tr>
+      <tr><td>贵州茅台2025年<strong>合并报表口径</strong>的经营活动现金流量净额是多少？</td><td>换成「母公司口径」再问一次，<strong>两个答案差近一倍</strong>——这是项目的核心工作</td></tr>
+      <tr><td>五粮液2025年的营业收入是多少？</td><td>语料外的公司，应当<strong>明确拒答</strong>而不是编一个</td></tr>
+      <tr><td>贵州茅台和宁德时代哪只更值得投资？</td><td>投资建议，应当拒答</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <h3>其他常用命令</h3>
+<pre><code>pytest                                  # 跑全部测试
+pytest tests/test_m1_parser.py -v       # 只跑解析器测试
+ruff check .                            # 代码规范检查
+python -m eval.run --dataset v2         # 跑评估
+python -m scripts.probe_pdf --dump-page 45   # 打印某页的解析细节，排查利器
+python -m scripts.probe_milvus          # 探查 Milvus 能力</code></pre>
+
+  <h4>HTTP 接口</h4>
+  <div class="tbl-scroll">
+  <table>
+    <thead><tr><th>方法</th><th>路径</th><th>作用</th></tr></thead>
+    <tbody>
+      <tr><td class="mono nw">POST</td><td class="mono">/chat</td><td>问答，一次返回</td></tr>
+      <tr><td class="mono nw">POST</td><td class="mono">/chat/stream</td><td>问答，SSE 流式</td></tr>
+      <tr><td class="mono nw">POST</td><td class="mono">/documents</td><td>上传 PDF，异步入库，返回 202 + job_id</td></tr>
+      <tr><td class="mono nw">GET</td><td class="mono">/documents</td><td>文档列表</td></tr>
+      <tr><td class="mono nw">GET</td><td class="mono">/documents/jobs/{job_id}</td><td>查入库进度</td></tr>
+      <tr><td class="mono nw">POST</td><td class="mono">/documents/{id}/reindex</td><td>重新入库</td></tr>
+      <tr><td class="mono nw">DELETE</td><td class="mono">/documents/{id}</td><td>删除文档及其块</td></tr>
+      <tr><td class="mono nw">GET</td><td class="mono">/healthz · /readyz</td><td>存活 / 就绪探针，<strong>连不上存储时先看 /readyz</strong></td></tr>
+    </tbody>
+  </table>
+  </div>
+</section>
+
+<section id="overview">
+  <h2><span class="num">04</span>四、系统全景</h2>
+  <p class="lede">两条链路：离线把 PDF 变成可检索的块，在线把问题变成带引用的答案。</p>
+
+<pre><code>【离线 · 入库】  scripts/ingest.py
+  PDF ──解析──&gt; ParsedBlock ──切块──&gt; ChunkUnit ──向量化──&gt; ┬─&gt; PostgreSQL（父块+子块全文）
+       pdf_parser     chunker          indexer            └─&gt; Milvus（只有子块+向量）
+
+【在线 · 问答】  app/graph/build.py
+  问题 → guard_in → analyze_query → cache_lookup ─┬─ chat  → 直接回答
+                                                  ├─ agent → ReAct 循环（查+算）
+                                                  └─ rag   → retrieve → grade → generate → verify
+                                                                      ↓
+                                                            cache_store → 答案 + 引用</code></pre>
+
+  <h3>两个库各存什么</h3>
+  <div class="tbl-scroll">
+  <table>
+    <thead><tr><th></th><th>PostgreSQL <code>chunks</code></th><th>Milvus <code>fin_chunks</code></th></tr></thead>
+    <tbody>
+      <tr><td>存谁</td><td>父块 + 子块（全量）</td><td><strong>只有子块</strong></td></tr>
+      <tr><td>正文</td><td><code>content</code> Text，无长度限制</td><td><code>content</code> VARCHAR(8192)，<strong>按字节算</strong></td></tr>
+      <tr><td>向量</td><td>无</td><td><code>dense_vector</code>(1024) + <code>sparse_vector</code>(BM25 自动生成)</td></tr>
+      <tr><td>过滤字段</td><td>有索引但不用于检索</td><td><code>doc_key</code> <code>company_code</code> <code>report_year</code> <code>period</code> <code>chunk_type</code> <code>statement_type</code> <code>strategy</code></td></tr>
+      <tr><td>随块带出</td><td>—</td><td><code>unit</code> <code>heading_path</code> <code>page_start</code> <code>parent_uid</code></td></tr>
+      <tr><td>主要用途</td><td>父块还原、审计、重建 Milvus</td><td>混合检索</td></tr>
+    </tbody>
+  </table>
+  </div>
+  <p>PG 一共 7 张表：<code>documents</code>（文档元信息与入库状态）、<code>chunks</code>（块）、<code>financial_metrics</code>（结构化指标，尚未启用）、评估四件套 <code>eval_datasets</code> / <code>eval_items</code> / <code>eval_runs</code> / <code>eval_results</code>。定义全在 <code>app/store/models.py</code>。</p>
+</section>
+
+<section id="offline">
+  <h2><span class="num">05</span>五、入库链路详解</h2>
+  <p class="lede">入口 <code>scripts/ingest.py</code>，主逻辑 <code>app/rag/indexer.py:174 ingest_pdf</code>。五个阶段。</p>
+
+  <ol class="flow">
+    <li><div>
+      <p class="ft">从文件名推断元信息</p>
+      <p class="fd">正则 <code>^(\d{6})_([^_]+)_.*?(\d{4})\s*年</code> 取出股票代码、公司名、年度，拼成 <code>doc_key</code>（如 <code>600519_2025_annual</code>）。推断失败<strong>直接报错而不是猜默认值</strong>——错的 doc_key 会污染整个检索过滤。</p>
+      <span class="fp">indexer.py:69 infer_meta</span>
+    </div></li>
+    <li><div>
+      <p class="ft">解析 PDF → ParsedBlock 列表</p>
+      <p class="fd">逐页：① <code>page.find_tables()</code> 找表；找不到但页面"看起来有表"就回退到文本对齐策略（中国平安 370 页只有 6 页能检出表，因为它的表没画框线）② 单元格粘连就按词坐标重建 ③ 正文段和表格<strong>按页面纵坐标混合排序</strong>（不这样做，表格会拿到整页最后一个标题，出现标题内容错配）④ <code>HeadingTracker</code> 维护标题路径 ⑤ <code>render_table</code> 渲染成带量纲声明的 Markdown。</p>
+      <span class="fp">pdf_parser.py:727 parse_pdf → ParsedDocument(blocks)</span>
+    </div></li>
+    <li><div>
+      <p class="ft">切块：先聚父块，再切子块</p>
+      <p class="fd"><code>group_parents</code> 把连续的同标题正文合并成父块（上限 3000 字），<strong>表格永远自成一块</strong>（和正文混在一起，切分时容易把表头和数据分开）。然后每个父块切子块：正文走 <code>RecursiveCharacterTextSplitter</code>（512 字 / 重叠 64，按段落→句子→词回退），表格走 <code>split_table</code> 按行切、<strong>每一片都重新带上表头和量纲</strong>——否则切出来的片段里数字没有列名也没有单位，等于废片。</p>
+      <span class="fp">chunker.py:222 chunk_document → list[ChunkUnit]</span>
+    </div></li>
+    <li><div>
+      <p class="ft">向量化：只给子块算</p>
+      <p class="fd">父块不进向量库（也进不去，实测最大 10636 字节超过 Milvus 的 8192 上限），命中子块后按 <code>parent_uid</code> 从 PG 取回即可。模型 <code>text-embedding-v4</code>，1024 维，百炼的批量上限是 10 条。</p>
+      <span class="fp">indexer.py:92 embed_texts</span>
+    </div></li>
+    <li><div>
+      <p class="ft">双写：先 PG 后 Milvus</p>
+      <p class="fd">顺序不能反——先写 Milvus 失败的话会留下无法回溯的孤立向量，而先写 PG 可以用它做补偿重建。幂等靠文件的 <code>content_hash</code>，同一文件重复入库不重复花 embedding 的钱。</p>
+      <span class="fp">indexer.py:132 _save_chunks_pg → indexer.py:159 _write_milvus</span>
+    </div></li>
+  </ol>
+
+  <div class="note warn">
+    <span class="lbl">这里有个经典的坑</span>
+    <p>Milvus 的 <code>VARCHAR(n)</code> 中 n <strong>是字节不是字符</strong>。<code>unit</code> 字段原来开 8 字节，而「百万元」三个汉字是 9 字节——招商银行入库直接失败，报 <code>length of varchar field unit exceeds max length</code>。这个坑在项目里栽过两次（第一次是父块超 8192）。中文字段一律按字节留余量。</p>
+  </div>
+</section>
+
+<section id="chunk">
+  <h2><span class="num">06</span>六、一个块长什么样</h2>
+  <p class="lede">这是理解整个项目最快的一步。看清楚存进去的到底是什么文本，后面检索和生成的设计就都讲得通了。</p>
+
+  <p>一个<strong>表格子块</strong>的 <code>content</code> 实际长这样（由 <code>pdf_parser.py:678 render_table</code> 生成）：</p>
+<pre><code>【单位：千元　币种：人民币】        ← 量纲，第一行
+合并资产负债表                      ← 口径，跨页继承来的
+六、主要会计数据和财务指标           ← caption / 标题
+| 项目 | 2025年 | 2024年 | 2023年 |
+| --- | --- | --- | --- |
+| 营业收入 | 43,945,411 | 38,537,237 | 33,719,935 |
+| 经营活动产生的现金流量净额 | 53,345,930 | 60,511,572 | 57,902,611 |
+【按年份】营业收入：2025年=43,945,411；2024年=38,537,237；2023年=33,719,935</code></pre>
+
+  <p>三个设计全在这段文本里：</p>
+  <ul class="lines">
+    <li><strong>第一行的量纲</strong>——不写在正文里，模型看不到（它读不到数据库字段），数值就会读错 1000 倍。</li>
+    <li><strong>第二行的口径</strong>——合并与母公司两张表在原 PDF 里逐字相同，因为报表标题只印在起始页，而表横跨两三页。不把标题继承下来，这两种块在文本上完全无法区分。</li>
+    <li><strong>最后的「【按年份】」行</strong>——三年并列表里"第几列是哪一年"要靠模型数列，很容易错；干脆在解析时展开成显式的键值对。</li>
+  </ul>
+
+  <p>对应的数据结构 <code>ChunkUnit</code> 在 <code>chunker.py:37</code>，字段和 PG 的 <code>chunks</code> 表、Milvus 的 <code>fin_chunks</code> 一一对应。<code>chunk_uid</code> 由 <code>sha1(doc_key|strategy|level|seq)</code> 生成——<strong>同一份文档重新解析必须得到相同 ID</strong>，否则增量更新无从比对。</p>
+</section>
+
+<section id="online">
+  <h2><span class="num">07</span>七、问答链路详解</h2>
+  <p class="lede">整个流程是一张 LangGraph 状态图，装配全在 <code>app/graph/build.py</code> 的 148 行里。状态结构在 <code>state.py</code>。</p>
+
+  <h3>三条分支怎么分的</h3>
+  <p>判断标准不是"涉及几家公司"，而是<strong>"最终那个数字能不能从一页表格里直接抄下来"</strong>：</p>
+  <div class="tbl-scroll">
+  <table>
+    <thead><tr><th>分支</th><th>什么时候走</th><th>典型问题</th></tr></thead>
+    <tbody>
+      <tr><td><code>chat</code></td><td>不需要查资料</td><td>「你能做什么」</td></tr>
+      <tr><td><code>rag</code></td><td>答案能从某一页<strong>直接读到</strong></td><td>「2025年营业收入是多少」</td></tr>
+      <tr><td><code>agent</code></td><td>答案必须<strong>算</strong>出来，或要多轮检索</td><td>「四个季度合计」「同比增长多少」「哪家更高」</td></tr>
+    </tbody>
+  </table>
+  </div>
+  <p>置信度不足时<strong>兜底走 agent 而不是 rag</strong>——agent 是 rag 的能力超集，判错只多花钱；反向判错会直接答错。</p>
+
+  <h3>节点逐个说</h3>
+  <div class="tbl-scroll">
+  <table>
+    <thead><tr><th>节点</th><th>位置</th><th>做什么</th></tr></thead>
+    <tbody>
+      <tr><td><code>guard_in</code></td><td class="mono nw">build.py:46</td><td>校验非空、长度 ≤500；把用户这句写进 <code>messages</code>（多轮指代消解需要）</td></tr>
+      <tr><td><code>analyze_query</code></td><td class="mono nw">query.py:261</td><td><strong>一次 LLM 调用做三件事</strong>：指代消解、抽实体（公司/年份/报表）、判路由。注意模型只输出<strong>公司名</strong>，名字→股票代码由程序查表——语料扩到 12 家后，实测模型把「茅台的股票代码」抽成了 600900（长江电力），整类题塌掉</td></tr>
+      <tr><td><code>cache_lookup</code></td><td class="mono nw">rag.py:182</td><td>精确缓存（Redis）+ 语义缓存（Milvus），见下</td></tr>
+      <tr><td><code>retrieve</code></td><td class="mono nw">rag.py:237</td><td>检索主节点，见下</td></tr>
+      <tr><td><code>grade</code></td><td class="mono nw">rag.py:312</td><td>相关度低于阈值就改写重试一次，仍不够则拒答</td></tr>
+      <tr><td><code>generate</code></td><td class="mono nw">rag.py:340</td><td>带编号的上下文进 prompt，强制标注引用 <code>[n]</code> 和单位</td></tr>
+      <tr><td><code>verify</code></td><td class="mono nw">rag.py:404</td><td>核验引用编号没越界（模型会编出 <code>[9]</code> 而上下文只有 5 条）</td></tr>
+      <tr><td><code>agent</code></td><td class="mono nw">agent.py:112</td><td>ReAct 循环 + 两个工具 + 三道护栏</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <h3>检索那一步具体在做什么</h3>
+  <p>这是整个系统的核心，全部在 <code>app/rag/retrievers.py</code>：</p>
+
+  <ol class="flow">
+    <li><div>
+      <p class="ft">拼标量过滤表达式</p>
+      <p class="fd">把抽出来的公司代码、年份、报表类型拼成 Milvus 的 <code>filter</code> 串，<strong>下推到检索层</strong>而不是检索完再过滤。因为 BM25 对年份完全无感（2023 与 2024 两条得分相同），公司和年份只能靠标量过滤卡住。<strong><code>strategy</code> 也必须参与</strong>——不同实验的块共存于同一集合，不隔离就会互相污染，消融对比直接失效。</p>
+      <span class="fp">retrievers.py:131 build_expr</span>
+    </div></li>
+    <li><div>
+      <p class="ft">年份要先扩展</p>
+      <p class="fd"><code>report_year</code> 是<strong>文档的年度</strong>，用户问的是<strong>数据的年度</strong>。一份 2025 年报含 2023–2025 三年数据，用 <code>report_year == 2024</code> 过滤会直接返回空集。所以查 2024 的数据要扩成 <code>[2024, 2025, 2026]</code>。这个缺陷曾导致 61 题中约四分之一被误判为「检索无结果」而拒答，而且因为在检索阶段就空了，调相关度阈值完全无效——排查时极易被误导。</p>
+      <span class="fp">retrievers.py:112 expand_report_years</span>
+    </div></li>
+    <li><div>
+      <p class="ft">混合检索，RRF 融合</p>
+      <p class="fd">向量路（dense，top 20）和 BM25 路（sparse，top 20）各查一次，两路都带同一个过滤表达式，用 <code>RRFRanker(60)</code> 融合。配置可切成纯 dense 或纯 sparse，用于消融。</p>
+      <span class="fp">retrievers.py:214 retrieve → client.hybrid_search</span>
+    </div></li>
+    <li><div>
+      <p class="ft">点名召回「近三年主要会计数据」表</p>
+      <p class="fd">这张表是年报里唯一把多年数据并列、每列明写年份的表，但每个科目只出现一次，在词频检索里天生吃亏——实测它在朴素查询下<strong>一次都没进过前 20</strong>。解析阶段已经把它标成 <code>chunk_type=table_summary</code>，这里直接按标签取，不跟词频赛跑。（早期做法是往查询里拼表名，但上交所叫「近三年主要会计数据和财务指标」、深交所叫「主要会计数据和财务指标」，写死一种只覆盖一半公司。）</p>
+      <span class="fp">retrievers.py:178 force_summary_table</span>
+    </div></li>
+    <li><div>
+      <p class="ft">重排 —— 默认关闭，因为实测有害</p>
+      <p class="fd">关闭时按原序截断到 <code>top_n</code>，这样开关重排只改变排序、不改变块数，消融才是在比排序质量本身。<strong>实测开启后掉 6.1 点</strong>，两组置信区间不重叠，成本还高 5%。机制很清楚：<code>gte-rerank-v2</code> 是通用语义模型，「母公司资产负债表」与「合并资产负债表」在语义上几乎无法区分，它没有「合并是财务数据默认口径」这个领域常识，于是把 RRF 本来排对的顺序打乱了——口径辨析类从 100% 掉到 81.2%。</p>
+      <span class="fp">retrievers.py:277 rerank</span>
+    </div></li>
+    <li><div>
+      <p class="ft">父块还原（small-to-big）</p>
+      <p class="fd">拿命中子块的 <code>parent_uid</code> 去 <strong>PG</strong> 查父块，用父块替换子块送进上下文——检索靠子块精准，生成靠父块完整。按 <code>parent_uid</code> 去重（多个子块常同属一个父块，重复进上下文只增加成本不增加信息），受字符预算约束，表格父块不中途截断。</p>
+      <span class="fp">retrievers.py:313 expand_parents → PG chunks 表</span>
+    </div></li>
+    <li><div>
+      <p class="ft">编号后进 prompt</p>
+      <p class="fd">每块编上 <code>[1] [2] …</code>，连同页码格式化进上下文。生成时强制模型用这些编号标引用，<code>verify</code> 节点再核验编号没越界。</p>
+      <span class="fp">rag.py:83 _format_context → rag.py:92 build_citations</span>
+    </div></li>
+  </ol>
+
+  <div class="note">
+    <span class="lbl">最值钱的一个参数</span>
+    <p>第 5 步的 <code>top_n</code>（送进上下文的块数）从 5 放宽到 15，正确率 <strong>+14.9 点</strong>，页码召回从 67.4% 升到 86.8%。<strong>信息不是没检索到，是检索到之后被截断扔掉了</strong>——检索 top20 召回 95.9%，截断到 top5 只剩 44.9%。这是整个项目里最有效的单个改动，而它很少被教程讨论。</p>
+  </div>
+
+  <h3>两级缓存：一个反直觉的发现</h3>
+  <p>精确缓存（Redis）管「同一个问题原样再问」，语义缓存（Milvus）管「问法不同但问的是同一件事」。<strong>语义缓存在财报场景有特有风险</strong>：问法只差一个实体时向量相似度仍然很高，纯按相似度匹配会返回一个精确但错误的数字。实测（茅台的四种问法，阈值 0.97）：</p>
+  <div class="tbl-scroll">
+  <table>
+    <thead><tr><th>只差什么</th><th>余弦相似度</th><th>离 0.97 阈值还有</th></tr></thead>
+    <tbody>
+      <tr><td>公司（宁德时代 vs 贵州茅台）</td><td class="mono">0.5824</td><td class="mono">0.39</td></tr>
+      <tr><td>年份（2025 vs 2024）</td><td class="mono">0.86–0.87</td><td class="mono">0.10</td></tr>
+      <tr><td><strong>科目（营业收入 vs 净利润）</strong></td><td class="mono"><strong>0.9224</strong></td><td class="mono"><strong>0.05</strong> ← 最危险</td></tr>
+    </tbody>
+  </table>
+  </div>
+  <p>最危险的是科目而不是年份，这与设计时的直觉相反。所以 <code>entity_key</code> 必须同时约束<strong>（公司, 年份, 科目）三者</strong>，精确相等才允许命中，向量相似度只用来吸收问法差异。<code>cache.py</code> 顶部有完整记录。</p>
+
+  <h3>Agent 的三道护栏</h3>
+  <div class="tbl-scroll">
+  <table>
+    <thead><tr><th>护栏</th><th>阈值</th><th>设计要点</th></tr></thead>
+    <tbody>
+      <tr><td>步数上限</td><td class="mono">8</td><td><strong>调用前检查</strong>——超限还调一次是白花钱</td></tr>
+      <tr><td>工具连续失败</td><td class="mono">3</td><td>失败原因回传给模型，让它换参数而不是直接中断</td></tr>
+      <tr><td>成本预算</td><td class="mono">¥0.15</td><td>单次问答的硬上限</td></tr>
+    </tbody>
+  </table>
+  </div>
+  <p><strong>触顶时强制收敛作答，而不是报错</strong>——用户宁可拿到「基于已查到的部分，结论是…」，也不要一句「超出步数限制」。</p>
+  <p>两个工具：<code>retrieve_report</code>（查年报）和 <code>calculate</code>（算数）。<code>calculate</code> 用的是<strong>基于 AST 白名单的受限求值</strong>，不是 <code>eval</code>——把表达式交给 <code>eval</code> 等于把任意代码执行权交给模型输出。只放行数值、四则运算和 <code>abs/round/min/max/sqrt</code>，拒绝名称、属性、下标、推导式、lambda，并对指数设上限（<code>9**9**9</code> 能用极小的输入耗尽内存）。</p>
+</section>
+
+<section id="config">
+  <h2><span class="num">08</span>八、配置系统</h2>
+  <p class="lede">这套配置是这个项目能做消融实验的原因，也是你改东西时<strong>第一个该看的地方</strong>——大部分参数不需要改代码。</p>
+
+  <div class="tbl-scroll">
+  <table>
+    <thead><tr><th>文件</th><th>管什么</th><th>改了要做什么</th></tr></thead>
+    <tbody>
+      <tr><td><code>configs/models.yaml</code></td><td>厂商列表 + 五个 profile + <strong>每个模型的单价</strong>（成本核算的数据源）</td><td>重启服务</td></tr>
+      <tr><td><code>configs/settings.yaml</code></td><td>Milvus 索引参数（HNSW M=16、efConstruction=200、efSearch=64、rrf_k=60）、限流、超时</td><td>改索引要<strong>重建 collection 并重新入库</strong></td></tr>
+      <tr><td><code>configs/experiments/*.yaml</code></td><td><strong>一个文件 = 一组实验</strong>。分块策略、检索模式、top_k、重排开关、top_n、相关度阈值、Agent 护栏……</td><td>改 <code>chunking</code> 段要重新入库；改其余的直接重跑即可</td></tr>
+      <tr><td><code>app/config/experiment.py</code></td><td>把 YAML 读成 <code>Experiment</code> 对象（pydantic），<strong>所有字段的定义和默认值都在这个文件里</strong></td><td>加字段才需要改</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <h4>现有的七组实验</h4>
+  <div class="tbl-scroll">
+  <table>
+    <thead><tr><th>exp_id</th><th>是什么</th></tr></thead>
+    <tbody>
+      <tr><td class="mono">exp00_debug</td><td><strong>当前最优</strong>：exp04 的检索参数 + qwen-flash 生成，质量持平而成本仅五分之一</td></tr>
+      <tr><td class="mono">exp01_baseline</td><td>基线：fixed 分块，用于对照</td></tr>
+      <tr><td class="mono">exp02_heading</td><td>换成 heading 分块策略</td></tr>
+      <tr><td class="mono">exp03_rerank</td><td>开重排</td></tr>
+      <tr><td class="mono">exp04_wider</td><td>放宽 top_n 到 15 ← 效果最好的那次</td></tr>
+      <tr><td class="mono">exp05_rerank_wide</td><td>重排 + 放宽</td></tr>
+      <tr><td class="mono">exp06_fixed</td><td>修复后的复验</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <div class="note warn">
+    <span class="lbl">一个坑过人的机制</span>
+    <p><code>exp_id</code> 跟着请求在 <code>GraphState</code> 里流转，并且<strong>同时出现在三个地方</strong>——Milvus 的 <code>strategy</code> 标量字段（隔离不同分块策略的块）、缓存键前缀（上组实验的缓存不污染这组）、评估记录。</p>
+    <p>节点内<strong>必须用 <code>experiment_of(state)</code> 取配置</strong>，直接调用无参的 <code>load_experiment()</code> 会去读环境变量 <code>EXP_ID</code>，命令行 <code>--exp</code> 就形同虚设。<strong>这个 bug 曾让三组消融实验跑的全是同一套配置，指标自然毫无差异</strong>，而且完全不报错。见 <code>state.py</code> 顶部注释。</p>
+  </div>
+
+  <p>所以"换一组参数跑实验"的正确做法是：复制一个 <code>configs/experiments/expNN_xxx.yaml</code> → 改里面的值 → <code>python -m eval.run --exp expNN_xxx</code>。<strong>不改代码。</strong></p>
+</section>
+
+<section id="eval">
+  <h2><span class="num">09</span>九、评估体系</h2>
+  <p class="lede">这是项目里最值钱的部分，也是你做任何改动之后<strong>验证它是好是坏的唯一方式</strong>。没有评估，所有优化都是盲调。</p>
+
+  <h3>怎么跑</h3>
+<pre><code>python -m eval.run --dataset v2                      # 用当前实验配置跑
+python -m eval.run --dataset v2 --exp exp04_wider    # 指定实验
+python -m eval.run --dataset v2 --limit 5            # 小样本试跑
+python -m eval.run --load eval/datasets/v4.jsonl --dataset v4   # 先导入再跑
+python -m eval.run --dataset v2 --concurrency 3      # 并发数，默认 3</code></pre>
+  <p>它<strong>直接调用图而不是走 HTTP</strong>，所以不需要先起服务，也能在 CI 里跑。</p>
+
+  <h3>题目长什么样</h3>
+<pre><code>{"question": "美的集团2025年归属于上市公司股东的净利润是多少？",
+ "category": "table",                    ← fact|table|multihop|scope|refuse 五类
+ "ground_truth": "43,945,411千元",
+ "numeric_value": 43945411.0, "unit": "千元",
+ "expected_doc_keys": ["000333_2025_annual"],
+ "expected_pages": [9],                  ← 用来算页码召回
+ "source": "auto_extracted", "verified": true,
+ "note": "第二节 … 第9页，列头年份 2025；原文行：| 归属于…净利润（千元） | 43,945,411 | …"}</code></pre>
+  <p>五类题里，<strong><code>scope</code>（口径辨析）是这个项目特有的</strong>——同一科目分别问合并与母公司，成对出题，让「蒙对一个」拿不到分。</p>
+
+  <h3>怎么判对错（<code>eval/metrics.py</code>）</h3>
+  <ul class="lines">
+    <li><strong>不用模型评判。</strong>数值题走 <code>numeric_match</code>：从答案里抽所有金额，按单位归一到「元」，容差 ±0.5% 比对。所以「16,883,810.25 万元」和「168,838,102,514.79 元」判为同一答案。好处是没有评判噪声、成本近似为零、对外无需解释。</li>
+    <li><strong>单位单独判</strong>（<code>unit_declared</code>）——答对数字却没说单位，在财报场景等于没回答。</li>
+    <li><strong>检索指标分两级</strong>：<code>doc_recall</code>（找对文档没有）和 <code>page_recall</code>（找对页没有）。两者差距大时说明"文档对了但不是那一页"——项目里出现过 93.9% 对 38.8% 的落差。</li>
+    <li><strong>所有指标报 bootstrap 95% 置信区间</strong>（默认 1000 轮）。<code>intervals_overlap</code> 返回 true 时<strong>不得声称有提升</strong>，只能记「无显著差异」。</li>
+    <li><strong>按类别分层报告</strong>——总体指标会被类别差异稀释，必须看分项。</li>
+  </ul>
+
+  <h3>结果落在哪</h3>
+  <p>两处：PG 的 <code>eval_runs</code> / <code>eval_results</code> 表（带完整配置快照和 git sha，所以任何一次结果都可追溯到当时的代码和参数），以及 <code>eval/reports/run_NNNN_expXX.md</code> 的逐题明细。</p>
+  <p>目前已经跑了 60+ 次，报告都在那个目录里——<strong>这是一份现成的实验史，值得翻一翻</strong>。<code>docs/benchmarks.md</code> 是它的导读。</p>
+
+  <div class="note">
+    <span class="lbl">一条纪律</span>
+    <p><strong>评估集一旦变更，历史指标全部作废</strong>，必须重跑。所以顺序只能是「先定评估集 → 再跑对照与优化」，反过来会白跑。</p>
+  </div>
+</section>
+
+<section id="howto">
+  <h2><span class="num">10</span>十、常见操作手册</h2>
+  <p class="lede">七个最常见的改动，每个都是完整步骤。点开看。</p>
+
+  <details class="howto">
+    <summary><span class="ht">加一家公司的年报</span><span class="hh">最常做</span></summary>
+    <div class="howto-body">
+      <ol>
+        <li>下载：<code>python -m scripts.fetch_reports 600036</code>（或手动放进 <code>data/raw/</code>，<strong>文件名必须是 <code>代码_公司名_...YYYY年...pdf</code></strong>）</li>
+        <li>入库：<code>python -m scripts.ingest</code>（已入库的会按 <code>content_hash</code> 跳过，不重复花钱）</li>
+        <li>验证：问一个这家公司的问题，看能不能答上来</li>
+        <li>如果答不上来，先查这家公司的表有没有被抽出来：<code>python -m scripts.probe_pdf --dump-page 9</code> 看那一页的解析结果</li>
+      </ol>
+      <p><strong>注意</strong>：新公司不需要改任何代码或配置——可用语料是从 PG 的 <code>documents</code> 表动态读的（<code>query.py:102 available_corpus</code>）。</p>
+    </div>
+  </details>
+
+  <details class="howto">
+    <summary><span class="ht">做一次消融实验</span><span class="hh">核心工作流</span></summary>
+    <div class="howto-body">
+      <ol>
+        <li>复制一份基准配置：<code>cp configs/experiments/exp00_debug.yaml configs/experiments/exp07_myidea.yaml</code></li>
+        <li>改 <code>exp_id</code> 为 <code>exp07_myidea</code>，<strong>只改你要测的那一个参数</strong>，其余保持完全一致</li>
+        <li>在文件顶部的注释里写清楚：这次改了什么、预期是什么、和哪一组对比</li>
+        <li>如果改的是 <code>chunking</code> 段 → 必须重新入库：<code>python -m scripts.ingest --exp exp07_myidea</code>（不同 strategy 的块按字段隔离，可以共存）</li>
+        <li>跑：<code>python -m eval.run --dataset v2 --exp exp07_myidea</code></li>
+        <li>读 <code>eval/reports/</code> 下最新的那份报告，<strong>看置信区间有没有重叠</strong>——重叠就是「无显著差异」，不能说有提升</li>
+      </ol>
+      <p><strong>常见错误</strong>：一次改两个参数。那样无论结果如何都无法归因，这次实验等于白跑。</p>
+    </div>
+  </details>
+
+  <details class="howto">
+    <summary><span class="ht">改提示词</span><span class="hh">见效最快</span></summary>
+    <div class="howto-body">
+      <ol>
+        <li>路由与实体抽取 → <code>app/graph/nodes/query.py:61</code> 的 <code>_SYSTEM</code></li>
+        <li>最终答案生成（引用、单位的强制约束）→ <code>app/graph/nodes/rag.py</code> 的 <code>_SYSTEM</code></li>
+        <li>Agent 的工作方式 → <code>app/graph/nodes/agent.py:47</code> 的 <code>_SYSTEM</code></li>
+        <li>改完<strong>一定要跑评估</strong>，提示词改动最容易"修好一个、弄坏三个"</li>
+      </ol>
+      <div class="note warn" style="margin-top:14px">
+        <p><strong>这里是过拟合最高发的地方。</strong>项目里有过教训：对着 61 道题调了六轮提示词拿到满分，换到 182 题只剩 74.7%。往提示词里加的规则往往只对你看过的那几道题成立。<strong>能用结构性修复解决的，不要加提示词规则。</strong></p>
+      </div>
+    </div>
+  </details>
+
+  <details class="howto">
+    <summary><span class="ht">给 Agent 加一个工具</span><span class="hh">中等</span></summary>
+    <div class="howto-body">
+      <ol>
+        <li>在 <code>app/graph/tools.py:133 build_tools</code> 里用 <code>@tool</code> 装饰器加一个函数</li>
+        <li><strong>docstring 就是给模型看的工具说明</strong>，写清楚什么时候该用、参数是什么意思——这比函数实现更影响效果</li>
+        <li>返回值要控制长度（现有的 <code>MAX_SNIPPET = 1200</code>），否则工具结果会撑爆上下文</li>
+        <li>失败时返回<strong>可读的错误信息</strong>而不是抛异常——护栏会把错误回传给模型让它换参数重试</li>
+        <li>在 <code>agent.py</code> 的 <code>_SYSTEM</code> 里补一句什么时候用这个工具</li>
+        <li>加测试：<code>tests/test_m5_agent.py</code> 里有现成的模式</li>
+      </ol>
+    </div>
+  </details>
+
+  <details class="howto">
+    <summary><span class="ht">加一个 Milvus 过滤字段</span><span class="hh">三处都要改</span></summary>
+    <div class="howto-body">
+      <ol>
+        <li><code>app/store/milvus_schema.py</code> 的 <code>_build_chunks_schema</code> 加字段（<strong>VARCHAR 长度按字节算，中文留三倍余量</strong>）</li>
+        <li><code>app/rag/indexer.py</code> 写入处补上这个字段的值</li>
+        <li><code>app/rag/retrievers.py</code> 的 <code>OUTPUT_FIELDS</code> 和 <code>build_expr</code> 加上</li>
+        <li>如果这个字段要从 PDF 里抽，还要改 <code>pdf_parser.py</code> 和 <code>chunker.py</code> 的 <code>ChunkUnit</code></li>
+        <li><strong>重建 collection 并重新入库</strong>：<code>python -m scripts.init_stores --drop</code> 然后 <code>python -m scripts.ingest --force</code></li>
+      </ol>
+      <p>Milvus 没有迁移工具，schema 改了只能重建——这也是为什么加字段要谨慎。</p>
+    </div>
+  </details>
+
+  <details class="howto">
+    <summary><span class="ht">加评估题</span><span class="hh">最该做的事</span></summary>
+    <div class="howto-body">
+      <ol>
+        <li>往 <code>eval/datasets/vN.jsonl</code> 追加一行，字段格式见第九节</li>
+        <li><code>expected_pages</code> 一定要填，否则页码召回算不出来</li>
+        <li><code>note</code> 里<strong>抄上原文那一行</strong>——以后复查时不用再翻 PDF</li>
+        <li>导入并跑：<code>python -m eval.run --load eval/datasets/vN.jsonl --dataset vN</code></li>
+      </ol>
+      <p>批量造题可以用 <code>python -m scripts.extract_key_metrics</code> 先抽底稿，再 <code>python -m scripts.build_eval_v2 --sample 20</code> 抽样人工核对。<strong>自动生成的题必须抽检</strong>——现有 182 题里 124 题是自动生成的，只抽检了 16%。</p>
+    </div>
+  </details>
+
+  <details class="howto">
+    <summary><span class="ht">换模型或加一家厂商</span><span class="hh">最简单</span></summary>
+    <div class="howto-body">
+      <ol>
+        <li>加厂商：在 <code>configs/models.yaml</code> 的 <code>providers</code> 下加一行（<code>base_url</code> + <code>api_key_env</code>），<strong>不写任何代码</strong>——所有厂商都兼容 OpenAI 接口，这一层只是配置表 + 工厂函数</li>
+        <li>加模型：在 <code>profiles</code> 下加一个 profile，<strong>单价一定要填对</strong>，成本核算直接读它</li>
+        <li>在 <code>.env</code> 里配上对应的 API Key 环境变量</li>
+        <li>在实验配置的 <code>generation.profile</code> 里引用它</li>
+      </ol>
+      <div class="note" style="margin-top:14px">
+        <p><strong>换生成模型会让历史指标全部不可比</strong>，消融对比必须固定生成模型。项目里实测 qwen-plus 对 qwen-flash 是 99.5% vs 98.4%，区间大幅重叠而成本差 4.3 倍——所以原计划的「按复杂度路由到不同模型」被数据否决掉了。</p>
+      </div>
+    </div>
+  </details>
+</section>
+
+<section id="trouble">
+  <h2><span class="num">11</span>十一、故障排查</h2>
+  <p class="lede">按"症状 → 原因 → 怎么修"组织。前四条是新手必踩的。</p>
+
+  <div class="tbl-scroll">
+  <table>
+    <thead><tr><th>症状</th><th>真正的原因</th><th>怎么修</th></tr></thead>
+    <tbody>
+      <tr>
+        <td>连接存储一直挂起直到超时，错误信息看不出原因</td>
+        <td>Windows 上 <code>localhost</code> 优先解析到 IPv6 <code>::1</code>，而容器端口转发只监听 IPv4</td>
+        <td>连接串一律用 <code>127.0.0.1</code>。<code>.env.example</code> 里已经是对的</td>
+      </tr>
+      <tr>
+        <td>多轮对话记不住上下文，checkpointer 像没生效</td>
+        <td>Windows 默认的 ProactorEventLoop 跑不了 psycopg 异步模式，checkpointer <strong>静默退回内存版</strong></td>
+        <td>已在 <code>main.py</code> 导入阶段设 <code>WindowsSelectorEventLoopPolicy</code>——注意必须在导入阶段，到 lifespan 里就晚了</td>
+      </tr>
+      <tr>
+        <td>脚本输出重定向到文件后只剩半行，但退出码是 0</td>
+        <td>Windows 下 stdout 退回 GBK 代码页，打印「¥」「—」就抛 <code>UnicodeEncodeError</code> 进程当场死，而 <code>; echo $?</code> 又把退出码洗成了 0</td>
+        <td>已在 <code>scripts/__init__.py</code> 强制 stdout 为 UTF-8。写新脚本记得走 <code>python -m scripts.xxx</code></td>
+      </tr>
+      <tr>
+        <td>入库报 <code>length of varchar field ... exceeds max length</code></td>
+        <td>Milvus 的 VARCHAR <strong>按字节算</strong>，中文一字三字节</td>
+        <td>改 <code>milvus_schema.py</code> 的长度常量，<code>--drop</code> 重建 collection 后重新入库</td>
+      </tr>
+      <tr>
+        <td>三组消融实验跑出来指标完全一样</td>
+        <td>节点里直接调了无参的 <code>load_experiment()</code>，读的是环境变量，命令行 <code>--exp</code> 没生效</td>
+        <td>所有节点必须用 <code>experiment_of(state)</code>。这个 bug 不报错，极难发现</td>
+      </tr>
+      <tr>
+        <td>某类问题全部拒答，调相关度阈值完全无效</td>
+        <td>检索阶段就返回了空集，阈值根本没被触及。多半是 <code>report_year</code> 过滤——它是文档年度不是数据年度</td>
+        <td>确认走了 <code>expand_report_years</code>。把 <code>LOG_LEVEL=DEBUG</code> 打开看实际的 filter 表达式</td>
+      </tr>
+      <tr>
+        <td>检索结果里混进了别的实验的块</td>
+        <td><code>build_expr</code> 没带 <code>strategy</code> 过滤</td>
+        <td>所有检索路径都必须带，包括 <code>force_summary_table</code></td>
+      </tr>
+      <tr>
+        <td>某家公司一道题都答不出来</td>
+        <td>它的表格没被抽出来。常见于无边框表（中国平安）、年份行排在表格框外（招行、中石油）</td>
+        <td><code>python -m scripts.probe_pdf --dump-page N</code> 看那一页。这是 <code>open-issues.md</code> 的 P1-5，<strong>至今未解决</strong></td>
+      </tr>
+      <tr>
+        <td>Agent 说「调用 calculate 工具进行计算。」然后就结束了</td>
+        <td>模型宣告要调用但实际没发出 tool_call</td>
+        <td>已有检测（<code>agent.py</code> 的 <code>MALFORMED_CALL</code>）：<strong>给用户看的最终回答里永远不该出现内部工具名</strong></td>
+      </tr>
+      <tr>
+        <td>Langfuse 没数据</td>
+        <td>没配 Key 时是<strong>静默跳过</strong>，不是错误</td>
+        <td>注册账号填 <code>LANGFUSE_PUBLIC_KEY</code> / <code>SECRET_KEY</code>。这是 open-issues 的 P2-3</td>
+      </tr>
+      <tr>
+        <td>服务起来了但答不了问题</td>
+        <td>某个存储没连上，但启动时<strong>故意不崩溃</strong></td>
+        <td>先看 <code>GET /readyz</code>，它会告诉你哪个挂了</td>
+      </tr>
+      <tr>
+        <td>改了配置没生效</td>
+        <td><code>load_experiment</code> 有 <code>lru_cache</code></td>
+        <td>重启进程</td>
+      </tr>
+    </tbody>
+  </table>
+  </div>
+  <p><code>docs/lessons.md</code> 里有完整的 28 条，包括每条是怎么定位到的——<strong>定位过程比结论更值得看</strong>。</p>
+</section>
+
+<section id="limits">
+  <h2><span class="num">12</span>十二、已知边界</h2>
+  <p class="lede">接手的人必须知道这些。完整清单在 <code>docs/open-issues.md</code>，每条都带「下一步动作」和「为什么还没做」。</p>
+
+  <div class="tbl-scroll">
+  <table>
+    <thead><tr><th>级别</th><th>问题</th><th>下一步</th></tr></thead>
+    <tbody>
+      <tr><td class="mono">P0-1</td><td>v2/v3/v4 评估集都已消耗，后续修复的真实收益无数据</td><td>用全新语料建 v5 留出集，一次性评估。<strong>最该做的一件</strong></td></tr>
+      <tr><td class="mono">P1-5</td><td>中国平安、中国石油仍抽不出指标，两家公司零覆盖</td><td>逐页对比 <code>find_tables</code> 与坐标重建，定位卡点</td></tr>
+      <tr><td class="mono">P1-6</td><td>「重述前/重述后」「调整前/调整后」拆列表的年份归属错</td><td>解析阶段把子列头并进表头</td></tr>
+      <tr><td class="mono">P1-4</td><td><code>financial_metrics</code> 表建了但结构化抽取未实现，SQL 路径未开放</td><td>抽 50 条人工核对，达 95% 才开放</td></tr>
+      <tr><td class="mono">P0-3</td><td>同配置多轮跑，正确率在 97.3%–100% 间浮动（1–2 道题）</td><td>多轮取多数，或固定检索侧随机性</td></tr>
+      <tr><td class="mono">P2-2</td><td>增量更新简化为全量重建</td><td>按块级 hash 做差分</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <h4>能力边界（不是 bug，是设计范围）</h4>
+  <ul class="lines">
+    <li><strong>只支持文本层可提取的 PDF</strong>，不做 OCR 扫描件</li>
+    <li><strong>单机规模</strong>：17 家公司约 1.3 万个块，没做过大规模压测</li>
+    <li><strong>评估覆盖 &lt; 语料覆盖</strong>：语料 17 家，评估集只覆盖其中一部分</li>
+    <li><strong>182 题中 124 题为自动生成</strong>，分层抽检 20/20 正确，但只覆盖 16%</li>
+  </ul>
+
+  <div class="note">
+    <span class="lbl">怎么看待 README 里的 100%</span>
+    <p>那是<strong>开发集</strong>上的数字。同一套代码在留出集上是 83.7%。项目里记录过两次"测出自己的水分"：第一次在 61 题上调六轮满分，换到 182 题只剩 74.7%（落差 22.6 点）；第二次吸取教训后差距缩到 3.3 点。<strong>正确的说法是「在这些题上不再有失败案例」，不是「系统准确率 100%」。</strong></p>
+  </div>
+</section>
+
+<section id="path">
+  <h2><span class="num">13</span>十三、七天学习路径</h2>
+  <p class="lede">自底向上：数据怎么进去 → 怎么存 → 怎么取出来 → 怎么编排 → 怎么验证。每层学透再上一层，每天都有动手动作。</p>
+
+  <p><strong>第 0 步（半天）</strong>：按第三节把环境跑起来。只做两件事——确认五个容器 healthy，确认 <code>python -m scripts.ingest --pages 20</code> 能跑完一份 PDF。<strong>先不要问问题、不要看前端</strong>，在线链路留到第 7 天。</p>
+
+  <div class="tbl-scroll">
+  <table>
+    <thead><tr><th>天</th><th>层</th><th>读什么</th><th>动手做什么</th></tr></thead>
+    <tbody>
+      <tr>
+        <td class="mono"><strong>D1</strong></td>
+        <td><strong>入库主流程</strong><br><span style="color:var(--muted);font-size:13px">先看骨架</span></td>
+        <td><code>scripts/ingest.py</code> → <code>indexer.py:174 ingest_pdf</code></td>
+        <td>通读 <code>ingest_pdf</code>，把五个阶段抄在纸上，写清楚<strong>每个阶段的输入输出类型</strong>。暂时不要跳进任何一个阶段内部。</td>
+      </tr>
+      <tr>
+        <td class="mono"><strong>D2</strong></td>
+        <td><strong>解析层·产物</strong></td>
+        <td><code>pdf_parser.py</code> 的 <code>ParsedBlock</code>（85 行）、<code>render_table</code>（678 行）</td>
+        <td>写十行脚本调 <code>parse_pdf()</code>，打印前 30 个 block 的 <code>kind / heading_path / unit / statement_type / text[:200]</code>。<strong>先看见真实产物，再看它怎么产生的</strong>——这是读这个文件唯一不崩的顺序。</td>
+      </tr>
+      <tr>
+        <td class="mono"><strong>D3</strong></td>
+        <td><strong>解析层·实现</strong><br><span style="color:var(--muted);font-size:13px">最难的一天</span></td>
+        <td><code>pdf_parser.py:727 parse_pdf</code> 主循环，配 <code>tests/test_m1_parser.py</code></td>
+        <td>按顺序拆：① 正则常量 ② <code>HeadingTracker</code> ③ <code>find_tables</code> + 坐标重建兜底 ④ 正文与表格按 y 坐标混排 ⑤ 跨页的三个继承（单位、口径、表格）。每读完一块去测试里找对应用例跑一遍。</td>
+      </tr>
+      <tr>
+        <td class="mono"><strong>D4</strong></td>
+        <td><strong>分块层</strong></td>
+        <td><code>chunker.py</code>（277 行，全项目最好读的文件之一）</td>
+        <td>对同一份 PDF 调 <code>chunk_document()</code>，统计父子块数量，挑三个子块打印全文。然后<strong>把 <code>table_atomic</code> 关掉再跑一次</strong>，对比表格被切成了什么样——你的第一次破坏实验。</td>
+      </tr>
+      <tr>
+        <td class="mono"><strong>D5</strong></td>
+        <td><strong>存储层</strong></td>
+        <td><code>milvus_schema.py</code> + <code>models.py</code> + 回看 <code>indexer</code> 的双写</td>
+        <td>直接查库：PG 里 <code>select * from chunks limit 5</code>，Milvus 用 <code>scripts/probe_milvus.py</code> 捞几条。<strong>亲眼确认父块只在 PG、子块两边都有</strong>。回答一个问题：为什么 <code>unit</code> 字段要开 32 字节？</td>
+      </tr>
+      <tr>
+        <td class="mono"><strong>D6</strong></td>
+        <td><strong>检索层</strong></td>
+        <td><code>retrievers.py</code>（360）+ <code>experiment.py</code>（134）</td>
+        <td>照第七节的七步走一遍。动手：手工构造 <code>QueryFilters</code> 直接调 <code>retrieve()</code>，打印命中的 uid 和分数。再把 <code>mode</code> 改成 <code>dense</code> / <code>sparse</code> 各跑一次，对比差在哪。</td>
+      </tr>
+      <tr>
+        <td class="mono"><strong>D7</strong></td>
+        <td><strong>编排层 + 验证</strong></td>
+        <td><code>build.py</code> → <code>state.py</code> → <code>nodes/rag.py</code> → <code>nodes/query.py</code> → <code>nodes/agent.py</code></td>
+        <td>这时才起服务问第三节那五个问题，<strong>去日志里确认</strong>过滤表达式、命中的块、父块还原后的上下文。然后跑第一次完整评估，再做第一次正式实验（把 <code>top_n</code> 从 15 改回 5，看掉多少分）。</td>
+      </tr>
+    </tbody>
+  </table>
+  </div>
+
+  <div class="note good">
+    <span class="lbl">为什么是这个顺序</span>
+    <p>自底向上的代价是前四天看不到完整效果，很容易忍不住跳去看前端。<strong>别跳。</strong>坚持到 D7 的收益是——你看在线链路时，检索返回的每个块从哪来、为什么长那样，你全都知道。反过来从图开始看，检索对你就是个黑盒，只能记住"它调了个 retrieve"。</p>
+  </div>
+</section>
+
+<section id="lookup">
+  <h2><span class="num">14</span>十四、速查表</h2>
+
+  <h3>改 X 该动哪个文件</h3>
+  <div class="tbl-scroll">
+  <table>
+    <thead><tr><th>我想…</th><th>动这里</th></tr></thead>
+    <tbody>
+      <tr><td>改分块大小 / 策略 / 父子块开关</td><td><code>configs/experiments/*.yaml</code> 的 <code>chunking</code> 段（<strong>改完要重新入库</strong>）</td></tr>
+      <tr><td>改成纯向量 / 纯 BM25 检索</td><td>同上，<code>retrieval.mode</code> → <code>dense</code> / <code>sparse</code></td></tr>
+      <tr><td>改送进上下文的块数</td><td>同上，<code>rerank.top_n</code>（<strong>最有效的参数</strong>）</td></tr>
+      <tr><td>开关重排</td><td>同上，<code>rerank.enabled</code></td></tr>
+      <tr><td>改 Agent 护栏阈值</td><td>同上，<code>agent</code> 段</td></tr>
+      <tr><td>换模型 / 加厂商</td><td><code>configs/models.yaml</code>（加配置，不写代码）</td></tr>
+      <tr><td>改 Milvus 索引参数</td><td><code>configs/settings.yaml</code> 的 <code>milvus.index</code>，改完要重建 collection</td></tr>
+      <tr><td>改表格渲染格式</td><td><code>pdf_parser.py:678 render_table</code></td></tr>
+      <tr><td>改表格切分方式</td><td><code>chunker.py:103 split_table</code></td></tr>
+      <tr><td>加一个 Milvus 过滤字段</td><td><code>milvus_schema.py</code> + <code>indexer.py</code> + <code>retrievers.py</code>，<strong>三处都要改</strong></td></tr>
+      <tr><td>改路由规则 / 实体抽取</td><td><code>nodes/query.py:61</code> 的 <code>_SYSTEM</code></td></tr>
+      <tr><td>改引用 / 单位的强制约束</td><td><code>nodes/rag.py</code> 的 <code>_SYSTEM</code></td></tr>
+      <tr><td>给 Agent 加工具</td><td><code>tools.py:133 build_tools</code></td></tr>
+      <tr><td>加图节点 / 改拓扑</td><td><code>graph/build.py</code> + 在 <code>state.py</code> 加字段</td></tr>
+      <tr><td>改评估判定逻辑</td><td><code>eval/metrics.py</code></td></tr>
+      <tr><td>加评估题</td><td><code>eval/datasets/*.jsonl</code> 追加一行</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <h3>命令速查</h3>
+<pre><code># 环境
+podman compose up -d                     起存储
+python -m scripts.smoke                  冒烟检查（不花钱）
+python -m alembic upgrade head           建 PG 表
+python -m scripts.init_stores [--drop]   建 Milvus collection
+
+# 数据
+python -m scripts.fetch_reports [代码...]        下载年报
+python -m scripts.ingest [--pages N|--force]    入库
+python -m scripts.probe_pdf --dump-page N       看某页解析细节（排查利器）
+python -m scripts.probe_milvus                  探查 Milvus
+
+# 服务
+uvicorn app.main:app                            API，8000
+chainlit run frontend/app.py --port 8001        前端
+arq app.worker.Settings                         Worker
+
+# 质量
+pytest                                   全部测试
+ruff check .                             规范检查
+python -m eval.run --dataset v2 [--exp X|--limit N]   评估</code></pre>
+
+  <h3>文档地图</h3>
+  <div class="tbl-scroll">
+  <table>
+    <thead><tr><th>文件</th><th>什么时候看</th></tr></thead>
+    <tbody>
+      <tr><td><code>README.md</code></td><td>想知道现状与指标</td></tr>
+      <tr><td><strong>本文</strong></td><td>想看懂、跑起来、改得动</td></tr>
+      <tr><td><code>项目学习指南.md</code></td><td>想把项目讲清楚并接住追问</td></tr>
+      <tr><td><code>fincopilot-architecture.html</code></td><td>想知道为什么这么设计（22 章 + 22 条决策记录）</td></tr>
+      <tr><td><code>docs/lessons.md</code></td><td>想知道踩过什么坑、<strong>怎么定位的</strong>（28 条）</td></tr>
+      <tr><td><code>docs/benchmarks.md</code></td><td>想看实验数据与结论</td></tr>
+      <tr><td><code>docs/open-issues.md</code></td><td>想知道还有什么没做好</td></tr>
+      <tr><td><code>eval/reports/*.md</code></td><td>想追某次评估的逐题明细</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <div class="note good">
+    <span class="lbl">一句话总结这个项目的设计信条</span>
+    <p><strong>「参数进配置，结构进代码，结论靠数据。」</strong>凡是要做对比实验的东西都在 YAML 里；凡是确定性的结构处理都写死在解析阶段；凡是声称有提升的都要有置信区间。读代码时拿这三条当线索，大部分设计选择都解释得通。</p>
+  </div>
+</section>
+
+<footer>
+  <span>FinCopilot 项目手册</span>
+  <span class="mono">app/ 5784 LOC · 2026-10-08</span>
+</footer>
+
+</main>
+</div>
+
+<script>
+(function(){
+  var links = document.querySelectorAll('nav.toc a');
+  if (!links.length || !('IntersectionObserver' in window)) return;
+  var map = {};
+  for (var i = 0; i < links.length; i++) {
+    map[links[i].getAttribute('href').slice(1)] = links[i];
+  }
+  var obs = new IntersectionObserver(function(entries){
+    entries.forEach(function(en){
+      var a = map[en.target.id];
+      if (!a || !en.isIntersecting) return;
+      for (var m = 0; m < links.length; m++) links[m].classList.remove('on');
+      a.classList.add('on');
+    });
+  }, { rootMargin: "-10% 0px -70% 0px" });
+  var secs = document.querySelectorAll('section[id]');
+  for (var s = 0; s < secs.length; s++) obs.observe(secs[s]);
+})();
+</script>
+
+</body>
+</html>
